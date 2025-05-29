@@ -152,13 +152,13 @@ class MacdTradingStrategy:
             if data_1h is None or data_4h is None or len(data_1h) < 50 or len(data_4h) < 50:
                 return 'HOLD'
             
-            # 使用信號分析器檢查做多信號
-            long_signal = self.signal_analyzer.analyze_long_signal(data_1h, data_4h)
+            # 使用信號分析器檢查做多信號 - 修正參數順序
+            long_signal = self.signal_analyzer.analyze_long_signal(data_4h, data_1h)
             if long_signal.get('signal', False):
                 return 'BUY'
             
-            # 檢查做空信號
-            short_signal = self.signal_analyzer.analyze_short_signal(data_1h, data_4h)
+            # 檢查做空信號 - 修正參數順序
+            short_signal = self.signal_analyzer.analyze_short_signal(data_4h, data_1h)
             if short_signal.get('signal', False):
                 return 'SELL'
             
@@ -262,16 +262,32 @@ class MacdTradingStrategy:
             是否成功進場
         """
         try:
+            # 獲取當前價格作為進場價
+            current_price = self.data_provider.get_current_price(self.symbol)
+            if current_price is None:
+                current_price = self.data_1h['close'].iloc[-1]
+            
+            # 獲取ATR用於計算停損停利
+            atr = signal.get('atr', self.data_1h['atr'].iloc[-1])
+            
+            # 計算停損停利
+            if signal['side'] == 'long':
+                stop_loss = current_price - (atr * config.STOP_LOSS_MULTIPLIER)
+                take_profit = current_price + (atr * config.STOP_LOSS_MULTIPLIER * config.RISK_REWARD_RATIO)
+            else:  # short
+                stop_loss = current_price + (atr * config.STOP_LOSS_MULTIPLIER)
+                take_profit = current_price - (atr * config.STOP_LOSS_MULTIPLIER * config.RISK_REWARD_RATIO)
+            
             # 計算倉位大小
             position_size = config.POSITION_SIZE
             
             # 建立持倉
             position = Position(
                 side=signal['side'],
-                entry_price=signal['entry_price'],
+                entry_price=current_price,
                 size=position_size,
-                stop_loss=signal['stop_loss'],
-                take_profit=signal['take_profit'],
+                stop_loss=stop_loss,
+                take_profit=take_profit,
                 timestamp=datetime.now()
             )
             
@@ -279,9 +295,9 @@ class MacdTradingStrategy:
             self.positions.append(position)
             
             logger.info(f"進場執行成功 - {signal['side'].upper()} "
-                       f"價格: {signal['entry_price']:.4f} "
-                       f"停損: {signal['stop_loss']:.4f} "
-                       f"停利: {signal['take_profit']:.4f}")
+                       f"價格: {current_price:.4f} "
+                       f"停損: {stop_loss:.4f} "
+                       f"停利: {take_profit:.4f}")
             
             return True
             
@@ -364,9 +380,9 @@ class MacdTradingStrategy:
     
     def run_strategy(self, duration_hours: int = 24) -> dict:
         """
-        運行 MACD 交易策略（即時監控模式）
+        運行 MACD 交易策略（信號監測模式）
         - 每小時第5秒：檢查進場信號（基於上一小時完整數據）
-        - 每5秒：檢查出場條件（基於即時價格）
+        - 純提醒模式：不執行實際交易，只提供信號提醒
         
         Args:
             duration_hours: 運行時長（小時）
@@ -375,35 +391,34 @@ class MacdTradingStrategy:
             策略運行結果
         """
         entry_check_second = config.HIGH_FREQ_MODE["ENTRY_CHECK_SECOND"]
-        exit_check_interval = config.HIGH_FREQ_MODE["EXIT_CHECK_INTERVAL"]
-        use_realtime_price = config.HIGH_FREQ_MODE["USE_REALTIME_PRICE"]
         
-        logger.info(f"開始運行 MACD 交易策略，預計運行 {duration_hours} 小時")
-        logger.info(f"監測頻率：每小時第{entry_check_second}秒檢查進場，每{exit_check_interval}秒檢查出場")
-        logger.info(f"價格模式：{'即時價格' if use_realtime_price else '收盤價格'}")
-        print(f"🚀 啟動 MACD 交易策略，預計運行 {duration_hours} 小時")
-        print(f"⚡ 監測模式：每小時第{entry_check_second}秒檢查進場，每{exit_check_interval}秒檢查出場")
+        logger.info(f"開始運行 MACD 信號監測，預計運行 {duration_hours} 小時")
+        logger.info(f"監測頻率：每小時第{entry_check_second}秒檢查進場信號")
+        logger.info(f"模式：純信號提醒，不執行實際交易")
+        print(f"🚀 啟動 MACD 信號監測，預計運行 {duration_hours} 小時")
+        print(f"⚡ 監測模式：每小時第{entry_check_second}秒檢查進場信號")
+        print(f"📢 純提醒模式：檢測到信號時會提醒，手動下單後讓幣安自動執行")
+        print(f"🎯 交易對：{self.symbol}")
+        print("-" * 80)
         
         start_time = datetime.now()
         end_time = start_time + timedelta(hours=duration_hours)
         
         last_entry_check_hour = -1  # 記錄上次檢查進場信號的小時
-        loop_count = 0  # 循環計數器
+        signal_count = 0  # 信號計數器
         
         while datetime.now() < end_time:
             try:
                 current_time = datetime.now()
                 current_hour = current_time.hour
                 current_second = current_time.second
-                loop_count += 1
                 
                 # 每小時第N秒檢查進場信號
                 if (current_second == entry_check_second and 
-                    current_hour != last_entry_check_hour and 
-                    self.current_position is None):
+                    current_hour != last_entry_check_hour):
                     
                     logger.info(f"⏰ {current_time.strftime('%H:%M:%S')} - 執行每小時進場信號檢查")
-                    print(f"⏰ {current_time.strftime('%H:%M:%S')} - 執行每小時進場信號檢查")
+                    print(f"\n⏰ {current_time.strftime('%H:%M:%S')} - 執行每小時進場信號檢查")
                     
                     # 更新市場數據（獲取完整的上一小時數據）
                     logger.info("📡 開始更新市場數據（獲取完整上一小時數據）...")
@@ -443,13 +458,39 @@ class MacdTradingStrategy:
                         
                         signal = self.check_entry_signals()
                         if signal:
-                            logger.info(f"🎯 檢測到進場信號: {signal['side'].upper()}")
-                            logger.info(f"📊 進場價格: {signal['entry_price']:.4f}, 停損: {signal['stop_loss']:.4f}, 停利: {signal['take_profit']:.4f}")
+                            signal_count += 1
                             
-                            print(f"🎯 檢測到進場信號: {signal['side'].upper()}")
-                            print(f"📊 進場價格: {signal['entry_price']:.4f}, 停損: {signal['stop_loss']:.4f}, 停利: {signal['take_profit']:.4f}")
+                            # 獲取當前價格用於計算建議價格
+                            current_price = self.data_provider.get_current_price(self.symbol)
+                            if current_price is None:
+                                current_price = self.data_1h['close'].iloc[-1]
                             
-                            self.execute_entry(signal)
+                            # 獲取ATR並計算建議的停損停利
+                            atr = signal.get('atr', self.data_1h['atr'].iloc[-1])
+                            
+                            signal_type = signal['side'].upper()
+                            if signal['side'] == 'long':
+                                suggested_stop_loss = current_price - (atr * config.STOP_LOSS_MULTIPLIER)
+                                suggested_take_profit = current_price + (atr * config.STOP_LOSS_MULTIPLIER * config.RISK_REWARD_RATIO)
+                            else:  # short
+                                suggested_stop_loss = current_price + (atr * config.STOP_LOSS_MULTIPLIER)
+                                suggested_take_profit = current_price - (atr * config.STOP_LOSS_MULTIPLIER * config.RISK_REWARD_RATIO)
+                            
+                            # 🚨 重要信號提醒
+                            logger.info(f"🚨🚨🚨 檢測到 {signal_type} 進場信號！🚨🚨🚨")
+                            logger.info(f"📊 建議進場價格: ${current_price:.4f}")
+                            logger.info(f"🛡️ 建議停損價格: ${suggested_stop_loss:.4f}")
+                            logger.info(f"🎯 建議停利價格: ${suggested_take_profit:.4f}")
+                            logger.info(f"📈 風險報酬比: 1:{config.RISK_REWARD_RATIO}")
+                            
+                            print(f"\n🚨🚨🚨 檢測到 {signal_type} 進場信號！🚨🚨🚨")
+                            print(f"📊 建議進場價格: ${current_price:.4f}")
+                            print(f"🛡️ 建議停損價格: ${suggested_stop_loss:.4f}")
+                            print(f"🎯 建議停利價格: ${suggested_take_profit:.4f}")
+                            print(f"📈 風險報酬比: 1:{config.RISK_REWARD_RATIO}")
+                            print(f"🎲 請手動下單，並在幣安設置對應的停損停利")
+                            print("=" * 80)
+                            
                         else:
                             logger.info("📊 無進場信號")
                             print("📊 無進場信號")
@@ -474,56 +515,33 @@ class MacdTradingStrategy:
                         print("❌ 數據更新失敗，跳過本次進場檢查")
                     
                     last_entry_check_hour = current_hour
-                
-                # 每N秒檢查出場條件（如果有持倉）
-                if self.current_position is not None:
-                    exit_reason = self.check_exit_conditions(use_realtime_price=use_realtime_price)
-                    if exit_reason:
-                        logger.info(f"🚪 觸發出場條件: {exit_reason}")
-                        print(f"🚪 觸發出場條件: {exit_reason}")
-                        self.execute_exit(exit_reason)
-                    elif loop_count % 12 == 0:  # 每分鐘輸出一次持倉狀態
-                        current_price = self.data_provider.get_current_price(self.symbol)
-                        if current_price:
-                            unrealized_pnl = (current_price - self.current_position.entry_price) * self.current_position.size
-                            if self.current_position.side == 'short':
-                                unrealized_pnl = -unrealized_pnl
-                            logger.info(f"💼 持倉狀態 - 方向: {self.current_position.side.upper()}, "
-                                      f"當前價格: {current_price:.4f}, 未實現損益: {unrealized_pnl:.4f}")
-                            print(f"💼 持倉狀態 - 方向: {self.current_position.side.upper()}, "
-                                  f"當前價格: {current_price:.4f}, 未實現損益: {unrealized_pnl:+.4f}")
-                
-                # 每5分鐘顯示一次策略統計（60次循環 = 5分鐘）
-                if loop_count % 60 == 0:
-                    logger.info(f"📈 策略統計: 總交易 {self.trade_count} 次, 勝率 {(self.win_count/max(1,self.trade_count)*100):.1f}%, 總損益 ${self.total_pnl:+.4f}")
-                    print(f"📈 策略統計: 總交易 {self.trade_count} 次, 勝率 {(self.win_count/max(1,self.trade_count)*100):.1f}%, 總損益 ${self.total_pnl:+.4f}")
                     
-                    # 計算剩餘時間
+                    # 顯示統計信息
                     remaining_time = end_time - datetime.now()
                     remaining_hours = remaining_time.total_seconds() / 3600
-                    logger.info(f"⏳ 策略剩餘運行時間: {remaining_hours:.1f} 小時")
-                    print(f"⏳ 策略剩餘運行時間: {remaining_hours:.1f} 小時")
+                    logger.info(f"📈 信號統計: 已檢測到 {signal_count} 個信號")
+                    logger.info(f"⏳ 剩餘監測時間: {remaining_hours:.1f} 小時")
+                    print(f"📈 信號統計: 已檢測到 {signal_count} 個信號")
+                    print(f"⏳ 剩餘監測時間: {remaining_hours:.1f} 小時")
                     print("-" * 60)
                 
-                # 等待指定秒數後下次檢查
-                time.sleep(exit_check_interval)
+                # 每分鐘等待一次，降低CPU使用率
+                time.sleep(60)
                 
             except KeyboardInterrupt:
-                logger.info("收到中斷信號，停止策略運行")
-                print("⚠️ 收到中斷信號，停止策略運行")
+                logger.info("收到中斷信號，停止信號監測")
+                print("⚠️ 收到中斷信號，停止信號監測")
                 break
             except Exception as e:
-                logger.error(f"策略運行錯誤: {e}")
-                print(f"❌ 策略運行錯誤: {e}")
-                time.sleep(exit_check_interval)  # 錯誤後等待指定秒數
+                logger.error(f"信號監測錯誤: {e}")
+                print(f"❌ 信號監測錯誤: {e}")
+                time.sleep(60)  # 錯誤後等待1分鐘
         
-        # 如果還有持倉，強制平倉
-        if self.current_position:
-            logger.info("策略結束，執行強制平倉")
-            print("🔚 策略結束，執行強制平倉")
-            self.execute_exit("strategy_end")
-        
-        return self.get_performance_summary()
+        return {
+            'total_signals': signal_count,
+            'monitoring_duration': duration_hours,
+            'end_time': datetime.now().isoformat()
+        }
     
     def get_performance_summary(self) -> dict:
         """
@@ -588,17 +606,19 @@ def main():
         strategy = MacdTradingStrategy()
         
         # 設定運行時間
-        print("🚀 MACD 交易策略啟動")
-        print("⚡ 監測模式：每小時第5秒檢查進場，每5秒檢查出場條件")
-        print("-" * 60)
+        print("🚀 MACD 信號監測系統啟動")
+        print("📢 純提醒模式：只監測信號，不執行交易")
+        print("⚡ 監測頻率：每小時第5秒檢查進場信號")
+        print("🎲 檢測到信號時會提醒，手動下單後讓幣安自動執行")
+        print("-" * 80)
         
-        # 執行策略（預設 24 小時）
+        # 執行信號監測（預設 24 小時）
         results = strategy.run_strategy(duration_hours=24)
         
-        print("\n=== 策略運行結束 ===")
-        print(f"總交易次數: {results['total_trades']}")
-        print(f"勝率: {results['win_rate']:.2f}%")
-        print(f"總損益: ${results['total_pnl']:+.4f}")
+        print("\n=== 信號監測結束 ===")
+        print(f"📊 總檢測信號數: {results['total_signals']}")
+        print(f"⏰ 監測時長: {results['monitoring_duration']} 小時")
+        print(f"🏁 結束時間: {results['end_time']}")
         
     except Exception as e:
         logger.error(f"主程式執行錯誤: {e}")
@@ -615,9 +635,8 @@ def test_short_run():
         results = strategy.run_strategy(duration_hours=0.167)  # 10分鐘
         
         print("\n=== 測試結果 ===")
-        print(f"總交易次數: {results['total_trades']}")
-        print(f"勝率: {results['win_rate']:.2f}%")
-        print(f"總損益: ${results['total_pnl']:+.4f}")
+        print(f"📊 檢測信號數: {results['total_signals']}")
+        print(f"⏰ 測試時長: {results['monitoring_duration']} 小時")
         
     except Exception as e:
         logger.error(f"測試執行錯誤: {e}")

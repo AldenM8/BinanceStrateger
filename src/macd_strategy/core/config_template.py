@@ -15,14 +15,36 @@ ATR_PERIOD = 14     # ATR 計算週期
 STOP_LOSS_MULTIPLIER = 2.0    # 停損倍數 (ATR的倍數)
 RISK_REWARD_RATIO = 1      # 風險報酬比
 POSITION_SIZE = 0.1           # 倉位大小 (10%)
+LEVERAGE = 30                 # 槓桿倍數 (合約交易)
+MARGIN_MODE = "isolated"      # 保證金模式: "isolated" (逐倉) 或 "cross" (全倉)
+
+# 動態計算維持保證金比率
+def calculate_maintenance_margin_ratio(leverage):
+    """
+    根據槓桿倍數動態計算建議的維持保證金比率係數
+    參考真實交易所的風險控制標準
+    """
+    if leverage <= 10:
+        return 0.6      # 低槓桿，較寬鬆
+    elif leverage <= 25:
+        return 0.5      # 中等槓桿
+    elif leverage <= 50:
+        return 0.4      # 高槓桿
+    elif leverage <= 75:
+        return 0.35     # 極高槓桿
+    else:
+        return 0.3      # 超高槓桿，更嚴格
+
+# 使用動態計算或手動設定
+MAINTENANCE_MARGIN_RATIO = calculate_maintenance_margin_ratio(LEVERAGE)  # 動態計算
+# MAINTENANCE_MARGIN_RATIO = 0.4  # 或手動設定
 
 # === 交易信號參數 ===
 MIN_CONSECUTIVE_BARS = 5      # 最少連續直方圖數量
 
 # === 回測參數 ===
 BACKTEST_DAYS = 180           # 回測天數
-WARMUP_DAYS = 100            # 預熱天數 (技術指標計算需要)
-SKIP_BARS = 0               # 跳過前N筆數據 (避免指標初期誤差)
+WARMUP_DAYS = 60            # 預熱天數 (技術指標計算需要)
 
 # === 交易對設定 ===
 SYMBOL = "SOLUSDT"           # 交易對
@@ -40,13 +62,7 @@ BACKTEST_LOG_FILE = "logs/backtest_log.txt"  # 回測日誌文件
 # === 高頻模式設定 ===
 HIGH_FREQ_MODE = {
     "ENTRY_CHECK_SECOND": 5,      # 每小時第N秒檢查進場信號
-    "EXIT_CHECK_INTERVAL": 5,     # 每N秒檢查出場條件
-    "USE_REALTIME_PRICE": True    # 是否使用即時價格
 }
-
-# === API 設定 (請在實際配置文件中填入) ===
-# BINANCE_API_KEY = "your_api_key_here"
-# BINANCE_SECRET_KEY = "your_secret_key_here"
 
 # === 實盤交易設定 ===
 # LIVE_TRADING = False  # 是否啟用實盤交易

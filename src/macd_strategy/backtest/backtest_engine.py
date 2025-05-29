@@ -121,7 +121,7 @@ class BacktestEngine:
     def execute_backtest(self, data_1h: pd.DataFrame, data_4h: pd.DataFrame, 
                         data_1h_full: Optional[pd.DataFrame] = None, 
                         data_4h_full: Optional[pd.DataFrame] = None,
-                        skip_bars: int = 50, symbol: str = None) -> Dict:
+                        symbol: str = None) -> Dict:
         """
         執行回測策略
         
@@ -130,7 +130,6 @@ class BacktestEngine:
             data_4h: 4小時數據（實際回測期間）
             data_1h_full: 完整1小時數據（含預熱期）
             data_4h_full: 完整4小時數據（含預熱期）
-            skip_bars: 跳過前N筆數據（技術指標穩定期）
             symbol: 交易對符號（None 表示使用 config 預設值）
             
         Returns:
@@ -151,6 +150,8 @@ class BacktestEngine:
         stop_loss = 0
         take_profit = 0
         entry_time = None
+        margin_used = 0  # 占用的保證金
+        notional_value = 0  # 名義價值
         trades = []
         
         # 待進場信號
@@ -162,15 +163,8 @@ class BacktestEngine:
         analysis_data_1h = data_1h_full if data_1h_full is not None else data_1h
         analysis_data_4h = data_4h_full if data_4h_full is not None else data_4h
         
-        # 跳過初期不穩定的數據
-        trading_data = data_1h.iloc[skip_bars:] if len(data_1h) > skip_bars else data_1h
-        skipped_count = min(skip_bars, len(data_1h))
-        
-        if skipped_count > 0:
-            print(f"⚠️  跳過前 {skipped_count} 筆數據以確保技術指標穩定")
-        
         # 遍歷交易數據
-        for i, (current_time, row) in enumerate(trading_data.iterrows()):
+        for i, (current_time, row) in enumerate(data_1h.iterrows()):
             current_price = row['close']  # 當前K線收盤價
             current_high = row['high']    # 當前K線最高價
             current_low = row['low']      # 當前K線最低價
@@ -198,42 +192,54 @@ class BacktestEngine:
                 
                 if pending_signal['type'] == 'long':
                     position = 'long'
+                    # 複利模式：保證金基於當前總資金計算，實現複利效果
                     position_value = capital * config.POSITION_SIZE
-                    position_size = position_value / entry_price
+                    # 槓桿合約：實際控制的名義價值
+                    notional_value = position_value * config.LEVERAGE
+                    position_size = notional_value / entry_price
                     
                     # 計算停損停利
                     atr = pending_signal['atr']
                     stop_loss = entry_price - (atr * config.STOP_LOSS_MULTIPLIER)
                     take_profit = entry_price + (atr * config.STOP_LOSS_MULTIPLIER * config.RISK_REWARD_RATIO)
                     
-                    capital -= position_value  # 買入股票支付現金
+                    # 槓桿交易只占用保證金，不需要全額資金
+                    margin_used = position_value  # 保證金 = 名義價值 / 槓桿
+                    capital -= margin_used  # 扣除保證金
                     entry_time = current_time
                     
                     print(f"📥 {self.format_taiwan_time(current_time)} 做多進場 - 價格: ${entry_price:.2f}, 停損: ${stop_loss:.2f}, 停利: ${take_profit:.2f}")
-                    print(f"💰 倉位大小: {position_size:.4f} {base_currency} (投入 ${position_value:.2f})")
+                    print(f"💰 倉位大小: {position_size:.4f} {base_currency} (名義價值 ${notional_value:.2f}, {config.LEVERAGE}x 槓桿)")
+                    print(f"💳 保證金占用: ${margin_used:.2f}")
                     
                     # 記錄進場日誌
-                    entry_msg = f"做多進場 - 價格: ${entry_price:.2f}, 停損: ${stop_loss:.2f}, 停利: ${take_profit:.2f}, 倉位: {position_size:.4f} {base_currency}"
+                    entry_msg = f"做多進場 - 價格: ${entry_price:.2f}, 停損: ${stop_loss:.2f}, 停利: ${take_profit:.2f}, 倉位: {position_size:.4f} {base_currency}, 槓桿: {config.LEVERAGE}x"
                     self.logger.info(entry_msg)
                     
                 elif pending_signal['type'] == 'short':
                     position = 'short'
+                    # 複利模式：保證金基於當前總資金計算，實現複利效果
                     position_value = capital * config.POSITION_SIZE
-                    position_size = position_value / entry_price
+                    # 槓桿合約：實際控制的名義價值
+                    notional_value = position_value * config.LEVERAGE
+                    position_size = notional_value / entry_price
                     
                     # 計算停損停利
                     atr = pending_signal['atr']
                     stop_loss = entry_price + (atr * config.STOP_LOSS_MULTIPLIER)
                     take_profit = entry_price - (atr * config.STOP_LOSS_MULTIPLIER * config.RISK_REWARD_RATIO)
                     
-                    capital += position_value  # 賣出股票獲得現金
+                    # 槓桿交易只占用保證金
+                    margin_used = position_value  # 保證金 = 名義價值 / 槓桿
+                    capital -= margin_used  # 扣除保證金（做空也需要保證金）
                     entry_time = current_time
                     
                     print(f"📥 {self.format_taiwan_time(current_time)} 做空進場 - 價格: ${entry_price:.2f}, 停損: ${stop_loss:.2f}, 停利: ${take_profit:.2f}")
-                    print(f"💰 倉位大小: {position_size:.4f} {base_currency} (賣出 ${position_value:.2f})")
+                    print(f"💰 倉位大小: {position_size:.4f} {base_currency} (名義價值 ${notional_value:.2f}, {config.LEVERAGE}x 槓桿)")
+                    print(f"💳 保證金占用: ${margin_used:.2f}")
                     
                     # 記錄進場日誌
-                    entry_msg = f"做空進場 - 價格: ${entry_price:.2f}, 停損: ${stop_loss:.2f}, 停利: ${take_profit:.2f}, 倉位: {position_size:.4f} {base_currency}"
+                    entry_msg = f"做空進場 - 價格: ${entry_price:.2f}, 停損: ${stop_loss:.2f}, 停利: ${take_profit:.2f}, 倉位: {position_size:.4f} {base_currency}, 槓桿: {config.LEVERAGE}x"
                     self.logger.info(entry_msg)
                 
                 # 清除待進場信號
@@ -244,38 +250,62 @@ class BacktestEngine:
                 exit_price = None
                 exit_reason = None
                 
+                # 首先檢查是否爆倉（逐倉模式）
+                # 計算當前未實現損益
                 if position == 'long':
-                    # 做多檢查：優先檢查這根K線是否觸及停損或停利
-                    if current_low <= stop_loss:
-                        # 觸及停損，使用停損價作為出場價
-                        exit_price = stop_loss
-                        exit_reason = '停損'
-                    elif current_high >= take_profit:
-                        # 觸及停利，使用停利價作為出場價
-                        exit_price = take_profit
-                        exit_reason = '停利'
-                    
-                elif position == 'short':
-                    # 做空檢查：優先檢查這根K線是否觸及停損或停利
-                    if current_high >= stop_loss:
-                        # 觸及停損，使用停損價作為出場價
-                        exit_price = stop_loss
-                        exit_reason = '停損'
-                    elif current_low <= take_profit:
-                        # 觸及停利，使用停利價作為出場價
-                        exit_price = take_profit
-                        exit_reason = '停利'
+                    unrealized_pnl = (current_price - entry_price) * position_size
+                else:  # short
+                    unrealized_pnl = (entry_price - current_price) * position_size
+                
+                # 計算維持保證金比率 (使用配置參數)
+                initial_margin_ratio = 1 / config.LEVERAGE
+                maintenance_margin_ratio = initial_margin_ratio * config.MAINTENANCE_MARGIN_RATIO
+                maintenance_margin = notional_value * maintenance_margin_ratio
+                
+                # 檢查是否觸發爆倉（剩餘保證金低於維持保證金）
+                remaining_margin = margin_used + unrealized_pnl
+                if remaining_margin <= maintenance_margin and config.MARGIN_MODE == "isolated":
+                    # 爆倉：強制平倉
+                    exit_price = current_price
+                    exit_reason = '爆倉'
+                    print(f"⚠️  爆倉警告！剩餘保證金 ${remaining_margin:.2f} 低於維持保證金 ${maintenance_margin:.2f}")
+                else:
+                    # 正常的停損停利檢查
+                    if position == 'long':
+                        # 做多檢查：優先檢查這根K線是否觸及停損或停利
+                        if current_low <= stop_loss:
+                            # 觸及停損，使用停損價作為出場價
+                            exit_price = stop_loss
+                            exit_reason = '停損'
+                        elif current_high >= take_profit:
+                            # 觸及停利，使用停利價作為出場價
+                            exit_price = take_profit
+                            exit_reason = '停利'
+                        
+                    elif position == 'short':
+                        # 做空檢查：優先檢查這根K線是否觸及停損或停利
+                        if current_high >= stop_loss:
+                            # 觸及停損，使用停損價作為出場價
+                            exit_price = stop_loss
+                            exit_reason = '停損'
+                        elif current_low <= take_profit:
+                            # 觸及停利，使用停利價作為出場價
+                            exit_price = take_profit
+                            exit_reason = '停利'
                 
                 # 執行出場
                 if exit_price is not None:
+                    # 槓桿合約損益計算
                     if position == 'long':
-                        # 做多出場：賣出股票
+                        # 做多出場：價差 × 倉位大小
                         pnl = (exit_price - entry_price) * position_size
-                        capital += position_size * exit_price  # 賣出股票獲得現金
+                        # 返還保證金並加上損益
+                        capital += margin_used + pnl
                     else:  # short
-                        # 做空出場：買回股票
+                        # 做空出場：反向價差 × 倉位大小
                         pnl = (entry_price - exit_price) * position_size
-                        capital -= position_size * exit_price  # 買回股票支付現金
+                        # 返還保證金並加上損益
+                        capital += margin_used + pnl
                     
                     trades.append({
                         'entry_time': entry_time,
@@ -284,12 +314,18 @@ class BacktestEngine:
                         'entry_price': entry_price,
                         'exit_price': exit_price,
                         'pnl': pnl,
-                        'reason': exit_reason
+                        'reason': exit_reason,
+                        'leverage': config.LEVERAGE,
+                        'margin_used': margin_used
                     })
-                    print(f"📤 {self.format_taiwan_time(current_time)} {position} 出場 - 價格: ${exit_price:.2f}, 損益: ${pnl:+.2f}, 原因: {exit_reason}")
+                    
+                    # 計算ROI（相對於保證金）
+                    roi = (pnl / margin_used) * 100
+                    
+                    print(f"📤 {self.format_taiwan_time(current_time)} {position} 出場 - 價格: ${exit_price:.2f}, 損益: ${pnl:+.2f}, ROI: {roi:+.1f}%, 原因: {exit_reason}")
                     
                     # 記錄出場日誌
-                    exit_msg = f"{position} 出場 - 價格: ${exit_price:.2f}, 損益: ${pnl:+.2f}, 原因: {exit_reason}"
+                    exit_msg = f"{position} 出場 - 價格: ${exit_price:.2f}, 損益: ${pnl:+.2f}, ROI: {roi:+.1f}%, 原因: {exit_reason}"
                     self.logger.info(exit_msg)
                     
                     position = None
@@ -337,17 +373,18 @@ class BacktestEngine:
         
         # 如果最後還有持倉，強制平倉
         if position is not None:
-            final_price = trading_data['close'].iloc[-1]
-            final_time = trading_data.index[-1]
+            final_price = data_1h['close'].iloc[-1]
+            final_time = data_1h.index[-1]
             
+            # 槓桿合約強制平倉損益計算
             if position == 'long':
-                # 做多強制平倉：賣出股票
+                # 做多強制平倉
                 pnl = (final_price - entry_price) * position_size
-                capital += position_size * final_price
+                capital += margin_used + pnl
             else:  # short
-                # 做空強制平倉：買回股票
+                # 做空強制平倉
                 pnl = (entry_price - final_price) * position_size
-                capital -= position_size * final_price
+                capital += margin_used + pnl
             
             trades.append({
                 'entry_time': entry_time,
@@ -356,9 +393,13 @@ class BacktestEngine:
                 'entry_price': entry_price,
                 'exit_price': final_price,
                 'pnl': pnl,
-                'reason': '強制平倉'
+                'reason': '強制平倉',
+                'leverage': config.LEVERAGE,
+                'margin_used': margin_used
             })
-            print(f"📤 {self.format_taiwan_time(final_time)} {position} 強制平倉 - 價格: ${final_price:.2f}, 損益: ${pnl:+.2f}")
+            
+            roi = (pnl / margin_used) * 100
+            print(f"📤 {self.format_taiwan_time(final_time)} {position} 強制平倉 - 價格: ${final_price:.2f}, 損益: ${pnl:+.2f}, ROI: {roi:+.1f}%")
         
         # 如果最後還有待進場信號，取消它
         if pending_signal is not None:
@@ -410,7 +451,7 @@ class BacktestEngine:
 
 
 def run_backtest(symbol: str = None, days: Optional[int] = None, 
-                warmup_days: Optional[int] = None, skip_bars: Optional[int] = None,
+                warmup_days: Optional[int] = None,
                 initial_capital: float = 10000.0) -> Dict:
     """
     執行完整的回測流程
@@ -419,7 +460,6 @@ def run_backtest(symbol: str = None, days: Optional[int] = None,
         symbol: 交易對符號（None 表示使用 config 預設值）
         days: 回測天數（None 表示使用 config 預設值）
         warmup_days: 預熱天數（用於技術指標計算，None 表示使用 config 預設值）
-        skip_bars: 跳過前N筆數據（None 表示使用 config 預設值）
         initial_capital: 初始資金
         
     Returns:
@@ -435,8 +475,6 @@ def run_backtest(symbol: str = None, days: Optional[int] = None,
         days = config.BACKTEST_DAYS
     if warmup_days is None:
         warmup_days = config.WARMUP_DAYS
-    if skip_bars is None:
-        skip_bars = config.SKIP_BARS
         
     print(f"🚀 {symbol} MACD 策略真實數據回測 (Binance 數據)")
     print("=" * 60)
@@ -501,26 +539,27 @@ def run_backtest(symbol: str = None, days: Optional[int] = None,
     
     print(f"📊 實際回測數據：1h={len(data_1h_with_indicators)} 筆，4h={len(data_4h_with_indicators)} 筆")
     print(f"📊 預熱期修正：使用 {warmup_days} 天歷史數據確保指標準確性")
-    print(f"📊 穩定期設定：跳過前 {skip_bars} 筆數據以避免指標初期誤差")
     print()
     
     # 顯示使用的參數
     print("📋 使用策略參數:")
     print(f"   回測天數: {days}")
     print(f"   預熱天數: {warmup_days}")
-    print(f"   跳過筆數: {skip_bars}")
     print(f"   MACD: ({config.MACD_FAST}, {config.MACD_SLOW}, {config.MACD_SIGNAL})")
     print(f"   ATR 週期: {config.ATR_PERIOD}")
     print(f"   最少連續直方圖: {config.MIN_CONSECUTIVE_BARS}")
     print(f"   停損倍數: {config.STOP_LOSS_MULTIPLIER}")
     print(f"   風報比: {config.RISK_REWARD_RATIO}")
     print(f"   倉位大小: {config.POSITION_SIZE * 100}%")
+    print(f"   槓桿倍數: {config.LEVERAGE}x (合約交易)")
+    print(f"   保證金模式: {'逐倉' if config.MARGIN_MODE == 'isolated' else '全倉'}")
+    print(f"   維持保證金比率: {config.MAINTENANCE_MARGIN_RATIO * 100}% (相對於初始保證金)")
     print()
     
     # 創建回測引擎並執行回測
     engine = BacktestEngine(initial_capital=initial_capital)
     results = engine.execute_backtest(data_1h_with_indicators, data_4h_with_indicators, 
-                                     data_1h_full, data_4h_full, skip_bars=skip_bars, symbol=symbol)
+                                     data_1h_full, data_4h_full, symbol=symbol)
     
     # 計算買入持有基準
     buy_hold_return = engine.calculate_buy_hold_return(data_1h_with_indicators)
@@ -571,11 +610,11 @@ def run_backtest(symbol: str = None, days: Optional[int] = None,
     print("📊 數據來源:")
     print(f"   來源: Binance API")
     print(f"   交易對: {symbol}")
+    print(f"   回測天數: {days} 天")
     print(f"   時間框架: 1小時 + 4小時")
     print(f"   數據筆數: 1h={len(data_1h_with_indicators)}, 4h={len(data_4h_with_indicators)}")
     print(f"   價格範圍: ${data_1h_with_indicators['close'].min():.2f} - ${data_1h_with_indicators['close'].max():.2f}")
     print(f"   預熱天數: {warmup_days} 天")
-    print(f"   跳過筆數: {skip_bars} 筆")
     
     return results 
 
