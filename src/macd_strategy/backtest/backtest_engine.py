@@ -68,20 +68,18 @@ def setup_backtest_logging():
         )
         file_handler.setLevel(getattr(logging, config.LOG_LEVEL))
         
-        # 控制台handler
-        console_handler = logging.StreamHandler()
-        console_handler.setLevel(getattr(logging, config.LOG_LEVEL))
-        
-        # 格式設定
+        # 格式設定（只為文件handler設定格式）
         formatter = logging.Formatter(
             '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
             datefmt='%Y-%m-%d %H:%M:%S'
         )
         file_handler.setFormatter(formatter)
-        console_handler.setFormatter(formatter)
         
+        # 只添加文件handler，不要控制台handler
         logger.addHandler(file_handler)
-        logger.addHandler(console_handler)
+        
+        # 防止向父logger傳播，避免重複輸出
+        logger.propagate = False
     
     return logger
 
