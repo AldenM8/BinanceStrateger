@@ -180,7 +180,7 @@ class BacktestEngine:
                 entry_price = current_open  # 使用開盤價進場
                 
                 # 顯示進場時的OHLC數據供驗證
-                print(f"\n📋 進場K線OHLC數據 ({self.format_taiwan_time(current_time)}):")
+                print(f"  📋 進場K線OHLC數據 ({self.format_taiwan_time(current_time)}):")
                 print(f"   開盤價: ${current_open:.2f}")
                 print(f"   最高價: ${current_high:.2f}")
                 print(f"   最低價: ${current_low:.2f}")
@@ -213,7 +213,7 @@ class BacktestEngine:
                     # 記錄進場日誌
                     entry_msg = f"做多進場 - 價格: ${entry_price:.2f}, 停損: ${stop_loss:.2f}, 停利: ${take_profit:.2f}, 倉位: {position_size:.4f} {base_currency}, 槓桿: {config.LEVERAGE}x"
                     self.logger.info(entry_msg)
-                    
+                
                 elif pending_signal['type'] == 'short':
                     position = 'short'
                     # 複利模式：保證金基於當前總資金計算，實現複利效果
@@ -321,10 +321,12 @@ class BacktestEngine:
                     roi = (pnl / margin_used) * 100
                     
                     print(f"📤 {self.format_taiwan_time(current_time)} {position} 出場 - 價格: ${exit_price:.2f}, 損益: ${pnl:+.2f}, ROI: {roi:+.1f}%, 原因: {exit_reason}")
+                    print()  # 出場後空行
                     
                     # 記錄出場日誌
                     exit_msg = f"{position} 出場 - 價格: ${exit_price:.2f}, 損益: ${pnl:+.2f}, ROI: {roi:+.1f}%, 原因: {exit_reason}"
                     self.logger.info(exit_msg)
+                    self.logger.info("")  # 出場後空行
                     
                     position = None
             
@@ -398,6 +400,12 @@ class BacktestEngine:
             
             roi = (pnl / margin_used) * 100
             print(f"📤 {self.format_taiwan_time(final_time)} {position} 強制平倉 - 價格: ${final_price:.2f}, 損益: ${pnl:+.2f}, ROI: {roi:+.1f}%")
+            print()
+            
+            # 記錄強制平倉日誌
+            force_close_msg = f"{position} 強制平倉 - 價格: ${final_price:.2f}, 損益: ${pnl:+.2f}, ROI: {roi:+.1f}%"
+            self.logger.info(force_close_msg)
+            self.logger.info("")  # 強制平倉後空行
         
         # 如果最後還有待進場信號，取消它
         if pending_signal is not None:
