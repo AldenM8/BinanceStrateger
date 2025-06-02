@@ -484,11 +484,18 @@ class MacdTradingStrategy:
                             logger.info(f"📈 風險報酬比: 1:{config.RISK_REWARD_RATIO}")
                             
                             print(f"\n🚨🚨🚨 檢測到 {signal_type} 進場信號！🚨🚨🚨")
-                            print(f"📊 建議進場價格: ${current_price:.4f}")
-                            print(f"🛡️ 建議停損價格: ${suggested_stop_loss:.4f}")
-                            print(f"🎯 建議停利價格: ${suggested_take_profit:.4f}")
-                            print(f"📈 風險報酬比: 1:{config.RISK_REWARD_RATIO}")
-                            print(f"🎲 請手動下單，並在幣安設置對應的停損停利")
+                            print(f"🎯 建議交易參數：")
+                            print(f"   方向: {signal_type}")
+                            print(f"   建議進場價: ${current_price:.2f}")
+                            print(f"   建議停損: ${suggested_stop_loss:.2f}")
+                            print(f"   建議停利: ${suggested_take_profit:.2f}")
+                            print(f"   槓桿倍數: {config.LEVERAGE}x")
+                            print(f"   倉位比例: {config.POSITION_SIZE * 100}%")
+                            print(f"   風險報酬比: 1:{config.RISK_REWARD_RATIO}")
+                            print(f"   ATR 值: {atr:.2f}")
+                            print(f"   停損距離: {abs(current_price - suggested_stop_loss):.2f} ({abs(current_price - suggested_stop_loss)/current_price*100:.2f}%)")
+                            print(f"   停利距離: {abs(suggested_take_profit - current_price):.2f} ({abs(suggested_take_profit - current_price)/current_price*100:.2f}%)")
+                            print(f"🎲 請手動到 Binance 下{config.LEVERAGE}x槓桿合約，設置對應的停損停利")
                             print("=" * 80)
                             
                         else:
