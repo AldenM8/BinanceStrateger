@@ -248,46 +248,46 @@ class BacktestEngine:
                 exit_price = None
                 exit_reason = None
                 
-                # 首先檢查是否爆倉（逐倉模式）
-                # 計算當前未實現損益
-                if position == 'long':
-                    unrealized_pnl = (current_price - entry_price) * position_size
-                else:  # short
-                    unrealized_pnl = (entry_price - current_price) * position_size
-                
-                # 計算維持保證金比率 (使用配置參數)
+                # 首先計算理論爆倉價格
                 initial_margin_ratio = 1 / config.LEVERAGE
                 maintenance_margin_ratio = initial_margin_ratio * config.MAINTENANCE_MARGIN_RATIO
-                maintenance_margin = notional_value * maintenance_margin_ratio
                 
-                # 檢查是否觸發爆倉（剩餘保證金低於維持保證金）
-                remaining_margin = margin_used + unrealized_pnl
-                if remaining_margin <= maintenance_margin and config.MARGIN_MODE == "isolated":
-                    # 爆倉：強制平倉
-                    exit_price = current_price
-                    exit_reason = '爆倉'
-                    print(f"⚠️  爆倉警告！剩餘保證金 ${remaining_margin:.2f} 低於維持保證金 ${maintenance_margin:.2f}")
-                else:
-                    # 正常的停損停利檢查
+                if position == 'long':
+                    # 做多爆倉價格 = 進場價格 * (1 - 初始保證金率 + 維持保證金率)
+                    liquidation_price = entry_price * (1 - initial_margin_ratio + maintenance_margin_ratio)
+                else:  # short
+                    # 做空爆倉價格 = 進場價格 * (1 + 初始保證金率 - 維持保證金率)
+                    liquidation_price = entry_price * (1 + initial_margin_ratio - maintenance_margin_ratio)
+                
+                # 優先檢查是否觸及爆倉（使用最高最低價）
+                if config.MARGIN_MODE == "isolated":
+                    if position == 'long' and current_low <= liquidation_price:
+                        # 做多爆倉：最低價觸及爆倉價格
+                        exit_price = liquidation_price
+                        exit_reason = '爆倉'
+                        print(f"⚠️  做多爆倉！最低價 ${current_low:.2f} 觸及爆倉價格 ${liquidation_price:.2f}")
+                    elif position == 'short' and current_high >= liquidation_price:
+                        # 做空爆倉：最高價觸及爆倉價格
+                        exit_price = liquidation_price
+                        exit_reason = '爆倉'
+                        print(f"⚠️  做空爆倉！最高價 ${current_high:.2f} 觸及爆倉價格 ${liquidation_price:.2f}")
+                
+                # 如果沒有爆倉，檢查停損停利（使用最高最低價）
+                if exit_price is None:
                     if position == 'long':
-                        # 做多檢查：優先檢查這根K線是否觸及停損或停利
+                        # 做多檢查：用最低價檢查停損，最高價檢查停利
                         if current_low <= stop_loss:
-                            # 觸及停損，使用停損價作為出場價
                             exit_price = stop_loss
                             exit_reason = '停損'
                         elif current_high >= take_profit:
-                            # 觸及停利，使用停利價作為出場價
                             exit_price = take_profit
                             exit_reason = '停利'
-                        
                     elif position == 'short':
-                        # 做空檢查：優先檢查這根K線是否觸及停損或停利
+                        # 做空檢查：用最高價檢查停損，最低價檢查停利
                         if current_high >= stop_loss:
-                            # 觸及停損，使用停損價作為出場價
                             exit_price = stop_loss
                             exit_reason = '停損'
                         elif current_low <= take_profit:
-                            # 觸及停利，使用停利價作為出場價
                             exit_price = take_profit
                             exit_reason = '停利'
                 
