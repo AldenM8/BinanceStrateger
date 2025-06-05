@@ -250,7 +250,7 @@ class BacktestEngine:
                 
                 # 首先計算理論爆倉價格
                 initial_margin_ratio = 1 / config.LEVERAGE
-                maintenance_margin_ratio = initial_margin_ratio * config.MAINTENANCE_MARGIN_RATIO
+                maintenance_margin_ratio = config.MAINTENANCE_MARGIN_RATIO
                 
                 if position == 'long':
                     # 做多爆倉價格 = 進場價格 * (1 - 初始保證金率 + 維持保證金率)

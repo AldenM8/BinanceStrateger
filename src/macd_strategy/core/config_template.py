@@ -35,17 +35,13 @@ POSITION_SIZE = 0.1      # 倉位大小 (10%)
 LEVERAGE = 80              # 槓桿倍數 (80x)
 MARGIN_MODE = "isolated"   # 保證金模式: "isolated" (逐倉) 或 "cross" (全倉)
 
-# 動態計算維持保證金比率
-def calculate_maintenance_margin_ratio(leverage: float, factor: float = 4.0) -> float:
-    """
-    根據槓桿倍數以公式計算建議的維持保證金比率
-    使用反比邏輯：比率 = factor / leverage，並限制上下限
-    """
-    ratio = factor / leverage
-    return max(0.05, min(0.8, round(ratio, 4)))  # 精確到小數第四位
-
-# 使用動態公式計算
-MAINTENANCE_MARGIN_RATIO = calculate_maintenance_margin_ratio(LEVERAGE)
+# === 維持保證金比率 ===
+# 幣安 ETHUSDT 永續合約實際維持保證金比率: 0.40%
+# 注意：不同持倉規模的維持保證金比率可能不同
+# 0-50,000 USDT: 0.40%
+# 50,000-250,000 USDT: 0.50% 
+# 詳細請查詢交易所官方文檔
+MAINTENANCE_MARGIN_RATIO = 0.004  # 0.40% (適用於小額持倉)
 
 # === 日誌設定 ===
 LOG_LEVEL = "INFO"

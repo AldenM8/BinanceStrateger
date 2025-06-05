@@ -28,7 +28,7 @@
 
 ### 風險控制
 - 停損：ATR × 2.0
-- 停利：停損 × 3.0（風報比3:1）
+- 停利：停損 × 1.1（風報比1.1:1）
 
 ## ⚙️ 快速開始
 
@@ -45,7 +45,23 @@ cp src/macd_strategy/core/config_template.py src/macd_strategy/core/config.py
 
 ### 2. 執行回測
 ```bash
+# 基本回測 (使用默認參數)
 python main.py
+
+# 自定義回測天數和初始資金
+python main.py --mode backtest --days 30 --capital 10000
+
+# 批量回測 (多種天數)
+python batch_backtest.py
+```
+
+### 3. 實時監控
+```bash
+# 24小時監控 (僅監控信號，不自動交易)
+python main.py --mode monitor
+
+# 自定義監控時長
+python main.py --mode monitor --hours 12
 ```
 
 ### 3. 自定義參數
@@ -59,8 +75,9 @@ MACD_SIGNAL = 9     # 信號線週期
 
 # 風險管理
 STOP_LOSS_MULTIPLIER = 2.0    # 停損倍數
-RISK_REWARD_RATIO = 3.0       # 風報比
+RISK_REWARD_RATIO = 1.1       # 風報比
 POSITION_SIZE = 0.1           # 倉位大小(10%)
+LEVERAGE = 80                 # 槓桿倍數
 
 # 回測設定
 BACKTEST_DAYS = 30           # 回測天數
@@ -82,18 +99,34 @@ print(f"總報酬率: {results['total_return']:.2f}%")
 print(f"勝率: {results['win_rate']:.1f}%")
 ```
 
+## 🎯 實時監控使用
+
+```python
+from src.macd_strategy.strategy.trading_strategy import MacdTradingStrategy
+
+# 創建策略實例
+strategy = MacdTradingStrategy()
+
+# 運行24小時監控（僅監控信號，不自動交易）
+results = strategy.run_strategy(duration_hours=24)
+```
+
 ## 📁 專案結構
 
 ```
 MACD_S/
 ├── src/macd_strategy/           # 策略核心
-│   ├── core/config.py          # 參數配置
+│   ├── core/
+│   │   ├── config.py           # 參數配置 (複製自 config_template.py)
+│   │   └── config_template.py  # 配置模板
 │   ├── data/data_provider.py   # 數據獲取
 │   ├── indicators/             # 技術指標
 │   ├── strategy/               # 交易策略
 │   ├── backtest/               # 回測引擎
 │   └── utils/                  # 工具函數
-├── main.py                     # 程式入口
+├── batch_backtest.py           # 批量回測程式入口
+├── reports/                    # 回測報告輸出
+├── logs/                      # 日誌檔案
 └── README.md                   # 專案說明
 ```
 
