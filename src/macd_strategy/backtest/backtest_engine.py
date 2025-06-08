@@ -591,14 +591,37 @@ def run_backtest(symbol: str = None, days: Optional[int] = None,
     print("📊 交易統計:")
     print(f"   總交易次數: {results['total_trades']}")
     if results['total_trades'] > 0:
-        win_trades = len([t for t in results['trades'] if t['pnl'] > 0])
-        lose_trades = results['total_trades'] - win_trades
-        print(f"   獲利交易: {win_trades}")
-        print(f"   虧損交易: {lose_trades}")
+        # 使用回測引擎內部已計算的統計數據，確保一致性
+        win_trades_count = len([t for t in results['trades'] if t['pnl'] > 0])
+        lose_trades_count = len([t for t in results['trades'] if t['pnl'] <= 0])
+        
+        # 數據一致性檢查
+        total_check = win_trades_count + lose_trades_count
+        if total_check != results['total_trades']:
+            logger.warning(f"統計數據不一致: 勝{win_trades_count} + 負{lose_trades_count} = {total_check} ≠ 總數{results['total_trades']}")
+            print(f"   ⚠️ 統計數據異常: 勝{win_trades_count} + 負{lose_trades_count} = {total_check} ≠ 總數{results['total_trades']}")
+        
+        # 檢查是否有損益為0的交易（平手）
+        draw_trades_count = len([t for t in results['trades'] if t['pnl'] == 0])
+        if draw_trades_count > 0:
+            print(f"   獲利交易: {win_trades_count}")
+            print(f"   虧損交易: {lose_trades_count - draw_trades_count}")
+            print(f"   平手交易: {draw_trades_count}")
+        else:
+            print(f"   獲利交易: {win_trades_count}")
+            print(f"   虧損交易: {lose_trades_count}")
+        
         print(f"   勝率: {results['win_rate']:.1f}%")
         print(f"   平均每筆損益: ${results['total_pnl']/results['total_trades']:+.2f}")
+        print(f"   平均獲利: ${results['avg_win']:+.2f}")
+        print(f"   平均虧損: ${results['avg_loss']:+.2f}")
         print(f"   最佳交易: ${results['best_trade']:+.2f}")
         print(f"   最差交易: ${results['worst_trade']:+.2f}")
+        
+        # 額外的統計分析
+        if win_trades_count > 0 and lose_trades_count > 0:
+            profit_factor = abs(results['avg_win'] * win_trades_count / (results['avg_loss'] * lose_trades_count))
+            print(f"   獲利因子: {profit_factor:.2f}")
     else:
         print("   無交易記錄")
     print()
