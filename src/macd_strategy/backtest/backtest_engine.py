@@ -54,6 +54,11 @@ def setup_backtest_logging():
     log_dir = Path("logs")
     log_dir.mkdir(exist_ok=True)
     
+    # 創建帶時間戳的日誌檔名
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    log_filename = f"backtest_{timestamp}.log"
+    log_path = log_dir / log_filename
+    
     # 創建回測日誌記錄器
     logger = logging.getLogger('backtest')
     logger.setLevel(getattr(logging, config.LOG_LEVEL))
@@ -62,7 +67,7 @@ def setup_backtest_logging():
     if not logger.handlers:
         # 文件handler
         file_handler = logging.FileHandler(
-            config.BACKTEST_LOG_FILE, 
+            log_path, 
             mode='w',  # 每次回測都重新開始
             encoding='utf-8'
         )
@@ -211,7 +216,7 @@ class BacktestEngine:
                     print(f"💳 保證金占用: ${margin_used:.2f}")
                     
                     # 記錄進場日誌
-                    entry_msg = f"做多進場 - 價格: ${entry_price:.2f}, 停損: ${stop_loss:.2f}, 停利: ${take_profit:.2f}, 倉位: {position_size:.4f} {base_currency}, 槓桿: {config.LEVERAGE}x"
+                    entry_msg = f"{self.format_taiwan_time(current_time)} 做多進場 - 價格: ${entry_price:.2f}, 停損: ${stop_loss:.2f}, 停利: ${take_profit:.2f}, 倉位: {position_size:.4f} {base_currency}, 槓桿: {config.LEVERAGE}x"
                     self.logger.info(entry_msg)
                 
                 elif pending_signal['type'] == 'short':
@@ -237,7 +242,7 @@ class BacktestEngine:
                     print(f"💳 保證金占用: ${margin_used:.2f}")
                     
                     # 記錄進場日誌
-                    entry_msg = f"做空進場 - 價格: ${entry_price:.2f}, 停損: ${stop_loss:.2f}, 停利: ${take_profit:.2f}, 倉位: {position_size:.4f} {base_currency}, 槓桿: {config.LEVERAGE}x"
+                    entry_msg = f"{self.format_taiwan_time(current_time)} 做空進場 - 價格: ${entry_price:.2f}, 停損: ${stop_loss:.2f}, 停利: ${take_profit:.2f}, 倉位: {position_size:.4f} {base_currency}, 槓桿: {config.LEVERAGE}x"
                     self.logger.info(entry_msg)
                 
                 # 清除待進場信號
@@ -248,26 +253,28 @@ class BacktestEngine:
                 exit_price = None
                 exit_reason = None
                 
-                # 首先計算理論爆倉價格
-                initial_margin_ratio = 1 / config.LEVERAGE
-                maintenance_margin_ratio = config.MAINTENANCE_MARGIN_RATIO
+                # 修正爆倉價格計算
+                initial_margin_ratio = 1 / config.LEVERAGE  # 初始保證金率 = 1/槓桿
+                maintenance_margin_ratio = config.MAINTENANCE_MARGIN_RATIO  # 維持保證金率
                 
                 if position == 'long':
-                    # 做多爆倉價格 = 進場價格 * (1 - 初始保證金率 + 維持保證金率)
-                    liquidation_price = entry_price * (1 - initial_margin_ratio + maintenance_margin_ratio)
+                    # 做多爆倉價格：當虧損達到保證金的95%時爆倉
+                    max_loss_ratio = 0.95  # 最大虧損比例
+                    liquidation_price = entry_price * (1 - max_loss_ratio / config.LEVERAGE)
                 else:  # short
-                    # 做空爆倉價格 = 進場價格 * (1 + 初始保證金率 - 維持保證金率)
-                    liquidation_price = entry_price * (1 + initial_margin_ratio - maintenance_margin_ratio)
+                    # 做空爆倉價格：當虧損達到保證金的95%時爆倉
+                    max_loss_ratio = 0.95  # 最大虧損比例
+                    liquidation_price = entry_price * (1 + max_loss_ratio / config.LEVERAGE)
                 
                 # 優先檢查是否觸及爆倉（使用最高最低價）
                 if config.MARGIN_MODE == "isolated":
                     if position == 'long' and current_low <= liquidation_price:
-                        # 做多爆倉：最低價觸及爆倉價格
+                        # 做多爆倉：最低價觸及爆倉價格，虧損全部保證金
                         exit_price = liquidation_price
                         exit_reason = '爆倉'
                         print(f"⚠️  做多爆倉！最低價 ${current_low:.2f} 觸及爆倉價格 ${liquidation_price:.2f}")
                     elif position == 'short' and current_high >= liquidation_price:
-                        # 做空爆倉：最高價觸及爆倉價格
+                        # 做空爆倉：最高價觸及爆倉價格，虧損全部保證金
                         exit_price = liquidation_price
                         exit_reason = '爆倉'
                         print(f"⚠️  做空爆倉！最高價 ${current_high:.2f} 觸及爆倉價格 ${liquidation_price:.2f}")
@@ -293,15 +300,20 @@ class BacktestEngine:
                 
                 # 執行出場
                 if exit_price is not None:
-                    # 槓桿合約損益計算
-                    if position == 'long':
-                        # 做多出場：價差 × 倉位大小
-                        pnl = (exit_price - entry_price) * position_size
-                        # 返還保證金並加上損益
-                        capital += margin_used + pnl
-                    else:  # short
-                        # 做空出場：反向價差 × 倉位大小
-                        pnl = (entry_price - exit_price) * position_size
+                    # 修正爆倉損益計算
+                    if exit_reason == '爆倉':
+                        # 爆倉時虧損全部保證金
+                        pnl = -margin_used
+                        capital += 0  # 爆倉時保證金全部虧損，不返還
+                    else:
+                        # 正常出場的槓桿合約損益計算
+                        if position == 'long':
+                            # 做多出場：價差 × 倉位大小
+                            pnl = (exit_price - entry_price) * position_size
+                        else:  # short
+                            # 做空出場：反向價差 × 倉位大小
+                            pnl = (entry_price - exit_price) * position_size
+                        
                         # 返還保證金並加上損益
                         capital += margin_used + pnl
                     
@@ -324,7 +336,7 @@ class BacktestEngine:
                     print()  # 出場後空行
                     
                     # 記錄出場日誌
-                    exit_msg = f"{position} 出場 - 價格: ${exit_price:.2f}, 損益: ${pnl:+.2f}, ROI: {roi:+.1f}%, 原因: {exit_reason}"
+                    exit_msg = f"{self.format_taiwan_time(current_time)} {position} 出場 - 價格: ${exit_price:.2f}, 損益: ${pnl:+.2f}, ROI: {roi:+.1f}%, 原因: {exit_reason}"
                     self.logger.info(exit_msg)
                     self.logger.info("")  # 出場後空行
                     
@@ -338,10 +350,6 @@ class BacktestEngine:
                 short_signal = self.signal_analyzer.analyze_short_signal(data_4h_filtered, data_1h_filtered)
                 
                 if long_signal['signal']:
-                    # 獲取當下的MACD值用於顯示
-                    macd_1h_current = data_1h_filtered['macd_histogram'].iloc[-1]
-                    macd_4h_current = data_4h_filtered['macd_histogram'].iloc[-1]
-                    
                     # 記錄待進場信號，下一根K線開盤時進場
                     pending_signal = {
                         'type': 'long',
@@ -349,16 +357,10 @@ class BacktestEngine:
                         'time': current_time
                     }
                     
-                    signal_msg = f"做多信號確認 - {self.format_taiwan_time(current_time)} - MACD 1hr: {macd_1h_current:.6f}, MACD 4hr: {macd_4h_current:.6f}"
                     print(f"🔔 {self.format_taiwan_time(current_time)} 做多信號確認 - 下一根K線進場")
-                    print(f"📊 MACD 1hr: {macd_1h_current:.6f}, MACD 4hr: {macd_4h_current:.6f}")
-                    self.logger.info(signal_msg)
+                    print(f"📊 MACD 1hr: {data_1h_filtered['macd_histogram'].iloc[-1]:.6f}, MACD 4hr: {data_4h_filtered['macd_histogram'].iloc[-1]:.6f}")
                 
                 elif short_signal['signal']:
-                    # 獲取當下的MACD值用於顯示
-                    macd_1h_current = data_1h_filtered['macd_histogram'].iloc[-1]
-                    macd_4h_current = data_4h_filtered['macd_histogram'].iloc[-1]
-                    
                     # 記錄待進場信號，下一根K線開盤時進場
                     pending_signal = {
                         'type': 'short',
@@ -366,10 +368,8 @@ class BacktestEngine:
                         'time': current_time
                     }
                     
-                    signal_msg = f"做空信號確認 - {self.format_taiwan_time(current_time)} - MACD 1hr: {macd_1h_current:.6f}, MACD 4hr: {macd_4h_current:.6f}"
                     print(f"🔔 {self.format_taiwan_time(current_time)} 做空信號確認 - 下一根K線進場")
-                    print(f"📊 MACD 1hr: {macd_1h_current:.6f}, MACD 4hr: {macd_4h_current:.6f}")
-                    self.logger.info(signal_msg)
+                    print(f"📊 MACD 1hr: {data_1h_filtered['macd_histogram'].iloc[-1]:.6f}, MACD 4hr: {data_4h_filtered['macd_histogram'].iloc[-1]:.6f}")
         
         # 如果最後還有持倉，強制平倉
         if position is not None:
@@ -380,11 +380,12 @@ class BacktestEngine:
             if position == 'long':
                 # 做多強制平倉
                 pnl = (final_price - entry_price) * position_size
-                capital += margin_used + pnl
             else:  # short
                 # 做空強制平倉
                 pnl = (entry_price - final_price) * position_size
-                capital += margin_used + pnl
+            
+            # 返還保證金並加上損益
+            capital += margin_used + pnl
             
             trades.append({
                 'entry_time': entry_time,
@@ -403,7 +404,7 @@ class BacktestEngine:
             print()
             
             # 記錄強制平倉日誌
-            force_close_msg = f"{position} 強制平倉 - 價格: ${final_price:.2f}, 損益: ${pnl:+.2f}, ROI: {roi:+.1f}%"
+            force_close_msg = f"{self.format_taiwan_time(final_time)} {position} 強制平倉 - 價格: ${final_price:.2f}, 損益: ${pnl:+.2f}, ROI: {roi:+.1f}%"
             self.logger.info(force_close_msg)
             self.logger.info("")  # 強制平倉後空行
         

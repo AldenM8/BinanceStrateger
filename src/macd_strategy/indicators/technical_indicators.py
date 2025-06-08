@@ -11,34 +11,8 @@ import logging
 from ..core import config
 from pathlib import Path
 
-# 設定模組專用logger，只輸出到日誌文件
+# 設定日誌
 logger = logging.getLogger(__name__)
-logger.setLevel(getattr(logging, config.LOG_LEVEL))
-
-# 防止向根logger傳播，避免在控制台重複顯示
-logger.propagate = False
-
-# 確保logs目錄存在並設定文件handler
-log_dir = Path("logs")
-log_dir.mkdir(exist_ok=True)
-
-# 如果還沒有handler，添加文件handler
-if not logger.handlers:
-    file_handler = logging.FileHandler(
-        config.BACKTEST_LOG_FILE, 
-        mode='a',  # 追加模式
-        encoding='utf-8'
-    )
-    file_handler.setLevel(getattr(logging, config.LOG_LEVEL))
-    
-    formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-    file_handler.setFormatter(formatter)
-    
-    logger.addHandler(file_handler)
-
 
 class TechnicalIndicators:
     """技術指標計算器"""
