@@ -196,9 +196,9 @@ class BacktestEngine:
                 if pending_signal['type'] == 'long':
                     position = 'long'
                     # 複利模式：保證金基於當前總資金計算，實現複利效果
-                    position_value = capital * config.POSITION_SIZE
+                    margin_used = capital * config.POSITION_SIZE  # 實際占用的保證金
                     # 槓桿合約：實際控制的名義價值
-                    notional_value = position_value * config.LEVERAGE
+                    notional_value = margin_used * config.LEVERAGE
                     position_size = notional_value / entry_price
                     
                     # 計算停損停利
@@ -207,7 +207,6 @@ class BacktestEngine:
                     take_profit = entry_price + (atr * config.STOP_LOSS_MULTIPLIER * config.RISK_REWARD_RATIO)
                     
                     # 槓桿交易只占用保證金，不需要全額資金
-                    margin_used = position_value  # 保證金 = 名義價值 / 槓桿
                     capital -= margin_used  # 扣除保證金
                     entry_time = current_time
                     
@@ -222,9 +221,9 @@ class BacktestEngine:
                 elif pending_signal['type'] == 'short':
                     position = 'short'
                     # 複利模式：保證金基於當前總資金計算，實現複利效果
-                    position_value = capital * config.POSITION_SIZE
+                    margin_used = capital * config.POSITION_SIZE  # 實際占用的保證金
                     # 槓桿合約：實際控制的名義價值
-                    notional_value = position_value * config.LEVERAGE
+                    notional_value = margin_used * config.LEVERAGE
                     position_size = notional_value / entry_price
                     
                     # 計算停損停利
@@ -233,7 +232,6 @@ class BacktestEngine:
                     take_profit = entry_price - (atr * config.STOP_LOSS_MULTIPLIER * config.RISK_REWARD_RATIO)
                     
                     # 槓桿交易只占用保證金
-                    margin_used = position_value  # 保證金 = 名義價值 / 槓桿
                     capital -= margin_used  # 扣除保證金（做空也需要保證金）
                     entry_time = current_time
                     
@@ -253,31 +251,29 @@ class BacktestEngine:
                 exit_price = None
                 exit_reason = None
                 
-                # 修正爆倉價格計算
-                initial_margin_ratio = 1 / config.LEVERAGE  # 初始保證金率 = 1/槓桿
-                maintenance_margin_ratio = config.MAINTENANCE_MARGIN_RATIO  # 維持保證金率
+                # 正確的爆倉價格計算
+                # 爆倉條件：當虧損達到保證金金額時（保留5%維持保證金）
+                maintenance_margin = margin_used * config.MAINTENANCE_MARGIN_RATIO
+                max_loss_before_liquidation = margin_used - maintenance_margin
                 
                 if position == 'long':
-                    # 做多爆倉價格：當虧損達到保證金的95%時爆倉
-                    max_loss_ratio = 0.95  # 最大虧損比例
-                    liquidation_price = entry_price * (1 - max_loss_ratio / config.LEVERAGE)
+                    # 做多爆倉價格：entry_price - max_loss_before_liquidation / position_size
+                    liquidation_price = entry_price - max_loss_before_liquidation / position_size
                 else:  # short
-                    # 做空爆倉價格：當虧損達到保證金的95%時爆倉
-                    max_loss_ratio = 0.95  # 最大虧損比例
-                    liquidation_price = entry_price * (1 + max_loss_ratio / config.LEVERAGE)
+                    # 做空爆倉價格：entry_price + max_loss_before_liquidation / position_size
+                    liquidation_price = entry_price + max_loss_before_liquidation / position_size
                 
-                # 優先檢查是否觸及爆倉（使用最高最低價）
-                if config.MARGIN_MODE == "isolated":
-                    if position == 'long' and current_low <= liquidation_price:
-                        # 做多爆倉：最低價觸及爆倉價格，虧損全部保證金
-                        exit_price = liquidation_price
-                        exit_reason = '爆倉'
-                        print(f"⚠️  做多爆倉！最低價 ${current_low:.2f} 觸及爆倉價格 ${liquidation_price:.2f}")
-                    elif position == 'short' and current_high >= liquidation_price:
-                        # 做空爆倉：最高價觸及爆倉價格，虧損全部保證金
-                        exit_price = liquidation_price
-                        exit_reason = '爆倉'
-                        print(f"⚠️  做空爆倉！最高價 ${current_high:.2f} 觸及爆倉價格 ${liquidation_price:.2f}")
+                # 檢查是否觸及爆倉（使用最高最低價）
+                if position == 'long' and current_low <= liquidation_price:
+                    # 做多爆倉：最低價觸及爆倉價格，虧損全部保證金
+                    exit_price = liquidation_price
+                    exit_reason = '爆倉'
+                    print(f"⚠️  做多爆倉！最低價 ${current_low:.2f} 觸及爆倉價格 ${liquidation_price:.2f}")
+                elif position == 'short' and current_high >= liquidation_price:
+                    # 做空爆倉：最高價觸及爆倉價格，虧損全部保證金
+                    exit_price = liquidation_price
+                    exit_reason = '爆倉'
+                    print(f"⚠️  做空爆倉！最高價 ${current_high:.2f} 觸及爆倉價格 ${liquidation_price:.2f}")
                 
                 # 如果沒有爆倉，檢查停損停利（使用最高最低價）
                 if exit_price is None:
