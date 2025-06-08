@@ -9,6 +9,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Dict, Optional, List
 import time
+import os
 
 from ..core import config
 from ..data.data_provider import DataProvider
@@ -130,7 +131,40 @@ class MacdTradingStrategy:
         self.data_1h = None
         self.last_update = None
         
+        # 設定監控模式的日誌文件
+        self._setup_monitor_logging()
+        
         logger.info(f"MACD 交易策略初始化完成 - 交易對: {self.symbol}")
+    
+    def _setup_monitor_logging(self):
+        """設定監控模式的日誌文件"""
+        # 確保logs目錄存在
+        logs_dir = "logs"
+        if not os.path.exists(logs_dir):
+            os.makedirs(logs_dir)
+        
+        # 生成帶時間戳的日誌文件名
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_filename = f"monitor_{timestamp}.log"
+        log_filepath = os.path.join(logs_dir, log_filename)
+        
+        # 為monitor logger添加文件處理器
+        monitor_logger = logging.getLogger(__name__)
+        
+        # 檢查是否已經有文件處理器，避免重複添加
+        has_file_handler = any(isinstance(handler, logging.FileHandler) 
+                              for handler in monitor_logger.handlers)
+        
+        if not has_file_handler:
+            file_handler = logging.FileHandler(log_filepath, encoding='utf-8')
+            file_formatter = logging.Formatter(
+                '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+            )
+            file_handler.setFormatter(file_formatter)
+            file_handler.setLevel(getattr(logging, config.LOG_LEVEL))
+            monitor_logger.addHandler(file_handler)
+            
+            logger.info(f"監控日誌文件已設定: {log_filepath}")
     
     def analyze_signal(self, data_1h: pd.DataFrame, data_4h: pd.DataFrame) -> str:
         """
@@ -374,10 +408,10 @@ class MacdTradingStrategy:
             logger.error(f"執行出場失敗: {e}")
             return False
     
-    def run_strategy(self, duration_hours: int = 24) -> dict:
+    def run_strategy(self, duration_hours: float = 24) -> dict:
         """
         運行 MACD 交易策略（信號監測模式）
-        - 每小時第5秒：檢查進場信號（基於上一小時完整數據）
+        - 每小時整點：開始檢查進場信號，持續重試直到獲得正確時間的數據
         - 純提醒模式：不執行實際交易，只提供信號提醒
         
         Args:
@@ -386,13 +420,12 @@ class MacdTradingStrategy:
         Returns:
             策略運行結果
         """
-        entry_check_second = config.HIGH_FREQ_MODE["ENTRY_CHECK_SECOND"]
         
         logger.info(f"開始運行 MACD 信號監測，預計運行 {duration_hours} 小時")
-        logger.info(f"監測頻率：每小時第{entry_check_second}秒檢查進場信號")
+        logger.info(f"監測頻率：每小時整點檢查進場信號，持續重試直到獲得正確數據")
         logger.info(f"模式：純信號提醒，不執行實際交易")
         print(f"🚀 啟動 MACD 信號監測，預計運行 {duration_hours} 小時")
-        print(f"⚡ 監測模式：每小時第{entry_check_second}秒檢查進場信號")
+        print(f"⚡ 監測模式：每小時整點檢查進場信號")
         print(f"📢 純提醒模式：檢測到信號時會提醒，手動下單後讓幣安自動執行")
         print(f"🎯 交易對：{self.symbol}")
         print("-" * 80)
@@ -407,129 +440,195 @@ class MacdTradingStrategy:
             try:
                 current_time = datetime.now()
                 current_hour = current_time.hour
-                current_second = current_time.second
+                current_minute = current_time.minute
                 
-                # 每小時第N秒檢查進場信號
-                if (current_second == entry_check_second and 
-                    current_hour != last_entry_check_hour):
+                # 每小時整點開始檢查進場信號
+                if (current_minute == 0 and current_hour != last_entry_check_hour):
                     
-                    logger.info(f"⏰ {current_time.strftime('%H:%M:%S')} - 執行每小時進場信號檢查")
-                    print(f"\n⏰ {current_time.strftime('%H:%M:%S')} - 執行每小時進場信號檢查")
+                    # 記錄檢查開始
+                    check_time_str = current_time.strftime('%Y-%m-%d %H:%M:%S')
+                    logger.info(f"⏰ {check_time_str} - 開始執行每小時信號檢查")
+                    print(f"\n⏰ {check_time_str} - 開始執行每小時信號檢查")
                     
-                    # 更新市場數據（獲取完整的上一小時數據）
-                    logger.info("📡 開始更新市場數據（獲取完整上一小時數據）...")
-                    print("📡 開始更新市場數據...")
+                    # 持續嘗試獲取正確的數據
+                    data_acquired = False
+                    retry_count = 0
+                    max_retries = 10  # 最多重試10次
                     
-                    if self.update_market_data():
-                        logger.info("✅ 市場數據更新成功")
+                    while not data_acquired and retry_count < max_retries:
+                        retry_count += 1
                         
-                        # 獲取當前價格信息
-                        current_price = self.data_provider.get_current_price(self.symbol)
-                        latest_1h_close = self.data_1h['close'].iloc[-1]
-                        latest_4h_close = self.data_4h['close'].iloc[-1]
-                        
-                        # 獲取最新的 MACD 數據
-                        latest_1h_macd = self.data_1h['macd_histogram'].iloc[-1]
-                        latest_4h_macd = self.data_4h['macd_histogram'].iloc[-1]
-                        
-                        logger.info(f"💰 當前市場價格:")
-                        logger.info(f"   即時價格: ${current_price:.4f}" if current_price else "   即時價格: 獲取失敗")
-                        logger.info(f"   1H 收盤價: ${latest_1h_close:.4f}")
-                        logger.info(f"   4H 收盤價: ${latest_4h_close:.4f}")
-                        logger.info(f"📊 MACD 指標狀態:")
-                        logger.info(f"   1H MACD 直方圖: {latest_1h_macd:.6f}")
-                        logger.info(f"   4H MACD 直方圖: {latest_4h_macd:.6f}")
-                        
-                        print(f"💰 當前市場價格:")
-                        print(f"   即時價格: ${current_price:.4f}" if current_price else "   即時價格: 獲取失敗")
-                        print(f"   1H 收盤價: ${latest_1h_close:.4f}")
-                        print(f"   4H 收盤價: ${latest_4h_close:.4f}")
-                        print(f"📊 MACD 指標狀態:")
-                        print(f"   1H MACD 直方圖: {latest_1h_macd:.6f}")
-                        print(f"   4H MACD 直方圖: {latest_4h_macd:.6f}")
-                        
-                        # 檢查進場信號
-                        logger.info("🔍 開始分析進場信號...")
-                        print("🔍 開始分析進場信號...")
-                        
-                        signal = self.check_entry_signals()
-                        if signal:
-                            signal_count += 1
-                            
-                            # 獲取當前價格用於計算建議價格
-                            current_price = self.data_provider.get_current_price(self.symbol)
-                            if current_price is None:
-                                current_price = self.data_1h['close'].iloc[-1]
-                            
-                            # 獲取ATR並計算建議的停損停利
-                            atr = signal.get('atr', self.data_1h['atr'].iloc[-1])
-                            
-                            signal_type = signal['side'].upper()
-                            if signal['side'] == 'long':
-                                suggested_stop_loss = current_price - (atr * config.STOP_LOSS_MULTIPLIER)
-                                suggested_take_profit = current_price + (atr * config.STOP_LOSS_MULTIPLIER * config.RISK_REWARD_RATIO)
-                            else:  # short
-                                suggested_stop_loss = current_price + (atr * config.STOP_LOSS_MULTIPLIER)
-                                suggested_take_profit = current_price - (atr * config.STOP_LOSS_MULTIPLIER * config.RISK_REWARD_RATIO)
-                            
-                            # 🚨 重要信號提醒
-                            logger.info(f"🚨🚨🚨 檢測到 {signal_type} 進場信號！🚨🚨🚨")
-                            logger.info(f"📊 建議進場價格: ${current_price:.4f}")
-                            logger.info(f"🛡️ 建議停損價格: ${suggested_stop_loss:.4f}")
-                            logger.info(f"🎯 建議停利價格: ${suggested_take_profit:.4f}")
-                            logger.info(f"📈 風險報酬比: 1:{config.RISK_REWARD_RATIO}")
-                            
-                            print(f"\n🚨🚨🚨 檢測到 {signal_type} 進場信號！🚨🚨🚨")
-                            print(f"🎯 建議交易參數：")
-                            print(f"   方向: {signal_type}")
-                            print(f"   建議進場價: ${current_price:.2f}")
-                            print(f"   建議停損: ${suggested_stop_loss:.2f}")
-                            print(f"   建議停利: ${suggested_take_profit:.2f}")
-                            print(f"   槓桿倍數: {config.LEVERAGE}x")
-                            print(f"   倉位比例: {config.POSITION_SIZE * 100}%")
-                            print(f"   風險報酬比: 1:{config.RISK_REWARD_RATIO}")
-                            print(f"   ATR 值: {atr:.2f}")
-                            print(f"   停損距離: {abs(current_price - suggested_stop_loss):.2f} ({abs(current_price - suggested_stop_loss)/current_price*100:.2f}%)")
-                            print(f"   停利距離: {abs(suggested_take_profit - current_price):.2f} ({abs(suggested_take_profit - current_price)/current_price*100:.2f}%)")
-                            print(f"🎲 請手動到 Binance 下{config.LEVERAGE}x槓桿合約，設置對應的停損停利")
-                            print("=" * 80)
-                            
+                        if retry_count > 1:
+                            logger.info(f"📡 第 {retry_count} 次嘗試獲取數據...")
+                            print(f"📡 第 {retry_count} 次嘗試獲取數據...")
                         else:
-                            logger.info("📊 無進場信號")
-                            print("📊 無進場信號")
+                            logger.info("📡 開始更新市場數據...")
+                            print("📡 開始更新市場數據...")
+                        
+                        if self.update_market_data():
+                            # 驗證數據時間是否正確
+                            data_validation = self._validate_data_timing(current_time)
                             
-                            # 提供更詳細的無信號原因
-                            logger.info("📋 信號分析詳情:")
-                            if latest_4h_macd > 0:
-                                logger.info("   4H MACD > 0，可能的做多環境")
-                                print("   4H MACD > 0，可能的做多環境")
-                            elif latest_4h_macd < 0:
-                                logger.info("   4H MACD < 0，可能的做空環境")
-                                print("   4H MACD < 0，可能的做空環境")
-                            else:
-                                logger.info("   4H MACD 接近 0，趨勢不明確")
-                                print("   4H MACD 接近 0，趨勢不明確")
+                            if data_validation['valid']:
+                                logger.info("✅ 市場數據更新成功，數據時間驗證通過")
+                                logger.info(f"📅 數據時間範圍: {data_validation['data_info']}")
+                                data_acquired = True
                                 
-                            if abs(latest_1h_macd) < 0.001:
-                                logger.info("   1H MACD 直方圖過小，信號不夠強烈")
-                                print("   1H MACD 直方圖過小，信號不夠強烈")
-                    else:
-                        logger.warning("❌ 數據更新失敗，跳過本次進場檢查")
-                        print("❌ 數據更新失敗，跳過本次進場檢查")
+                                # 獲取當前價格信息
+                                current_price = self.data_provider.get_current_price(self.symbol)
+                                latest_1h_close = self.data_1h['close'].iloc[-1]
+                                latest_4h_close = self.data_4h['close'].iloc[-1]
+                                
+                                # 獲取最新的 MACD 數據
+                                latest_1h_macd = self.data_1h['macd_histogram'].iloc[-1]
+                                latest_4h_macd = self.data_4h['macd_histogram'].iloc[-1]
+                                
+                                # 記錄市場狀態
+                                logger.info(f"💰 當前市場價格:")
+                                logger.info(f"   即時價格: ${current_price:.4f}" if current_price else "   即時價格: 獲取失敗")
+                                logger.info(f"   1H 收盤價: ${latest_1h_close:.4f} ({data_validation['latest_1h_time']})")
+                                logger.info(f"   4H 收盤價: ${latest_4h_close:.4f} ({data_validation['latest_4h_time']})")
+                                logger.info(f"📊 MACD 指標狀態:")
+                                logger.info(f"   1H MACD 直方圖: {latest_1h_macd:.6f}")
+                                logger.info(f"   4H MACD 直方圖: {latest_4h_macd:.6f}")
+                                
+                                print(f"💰 當前市場價格:")
+                                print(f"   即時價格: ${current_price:.4f}" if current_price else "   即時價格: 獲取失敗")
+                                print(f"   1H 收盤價: ${latest_1h_close:.4f} ({data_validation['latest_1h_time']})")
+                                print(f"   4H 收盤價: ${latest_4h_close:.4f} ({data_validation['latest_4h_time']})")
+                                print(f"📊 MACD 指標狀態:")
+                                print(f"   1H MACD 直方圖: {latest_1h_macd:.6f}")
+                                print(f"   4H MACD 直方圖: {latest_4h_macd:.6f}")
+                                
+                                # 檢查進場信號
+                                logger.info("🔍 開始分析進場信號...")
+                                print("🔍 開始分析進場信號...")
+                                
+                                signal = self.check_entry_signals()
+                                if signal:
+                                    signal_count += 1
+                                    
+                                    # 獲取當前價格用於計算建議價格
+                                    current_price = self.data_provider.get_current_price(self.symbol)
+                                    if current_price is None:
+                                        current_price = self.data_1h['close'].iloc[-1]
+                                    
+                                    # 獲取ATR並計算建議的停損停利
+                                    atr = signal.get('atr', self.data_1h['atr'].iloc[-1])
+                                    
+                                    signal_type = signal['side'].upper()
+                                    if signal['side'] == 'long':
+                                        suggested_stop_loss = current_price - (atr * config.STOP_LOSS_MULTIPLIER)
+                                        suggested_take_profit = current_price + (atr * config.STOP_LOSS_MULTIPLIER * config.RISK_REWARD_RATIO)
+                                    else:  # short
+                                        suggested_stop_loss = current_price + (atr * config.STOP_LOSS_MULTIPLIER)
+                                        suggested_take_profit = current_price - (atr * config.STOP_LOSS_MULTIPLIER * config.RISK_REWARD_RATIO)
+                                    
+                                    # 🚨 重要信號提醒
+                                    logger.info(f"🚨🚨🚨 檢測到 {signal_type} 進場信號！🚨🚨🚨")
+                                    logger.info(f"📊 建議進場價格: ${current_price:.4f}")
+                                    logger.info(f"🛡️ 建議停損價格: ${suggested_stop_loss:.4f}")
+                                    logger.info(f"🎯 建議停利價格: ${suggested_take_profit:.4f}")
+                                    logger.info(f"📈 風險報酬比: 1:{config.RISK_REWARD_RATIO}")
+                                    logger.info(f"📏 ATR 值: {atr:.4f}")
+                                    
+                                    print(f"\n🚨🚨🚨 檢測到 {signal_type} 進場信號！🚨🚨🚨")
+                                    print(f"🎯 建議交易參數：")
+                                    print(f"   方向: {signal_type}")
+                                    print(f"   建議進場價: ${current_price:.2f}")
+                                    print(f"   建議停損: ${suggested_stop_loss:.2f}")
+                                    print(f"   建議停利: ${suggested_take_profit:.2f}")
+                                    print(f"   槓桿倍數: {config.LEVERAGE}x")
+                                    print(f"   倉位比例: {config.POSITION_SIZE * 100}%")
+                                    print(f"   風險報酬比: 1:{config.RISK_REWARD_RATIO}")
+                                    print(f"   ATR 值: {atr:.2f}")
+                                    print(f"   停損距離: {abs(current_price - suggested_stop_loss):.2f} ({abs(current_price - suggested_stop_loss)/current_price*100:.2f}%)")
+                                    print(f"   停利距離: {abs(suggested_take_profit - current_price):.2f} ({abs(suggested_take_profit - current_price)/current_price*100:.2f}%)")
+                                    print(f"🎲 請手動到 Binance 下{config.LEVERAGE}x槓桿合約，設置對應的停損停利")
+                                    print("=" * 80)
+                                    
+                                else:
+                                    logger.info("📊 本次檢查無進場信號")
+                                    print("📊 本次檢查無進場信號")
+                                    
+                                    # 記錄詳細的無信號原因
+                                    logger.info("📋 信號分析詳情:")
+                                    
+                                    # 檢查1小時MACD狀態
+                                    prev_1h_macd = self.data_1h['macd_histogram'].iloc[-2] if len(self.data_1h) > 1 else 0
+                                    logger.info(f"   1H MACD: 當前={latest_1h_macd:.6f}, 前一根={prev_1h_macd:.6f}")
+                                    
+                                    if latest_1h_macd > 0 and prev_1h_macd <= 0:
+                                        logger.info("   1H MACD 剛轉正，檢查4H確認...")
+                                        if latest_4h_macd <= 0:
+                                            logger.info("   ❌ 4H MACD 非正值，做多信號未確認")
+                                    elif latest_1h_macd < 0 and prev_1h_macd >= 0:
+                                        logger.info("   1H MACD 剛轉負，檢查4H確認...")
+                                        if latest_4h_macd >= 0:
+                                            logger.info("   ❌ 4H MACD 非負值，做空信號未確認")
+                                    else:
+                                        logger.info("   1H MACD 未出現轉向信號")
+                                    
+                                    # 4小時趨勢分析
+                                    if latest_4h_macd > 0:
+                                        logger.info("   4H MACD > 0，整體偏多頭環境")
+                                        print("   4H MACD > 0，整體偏多頭環境")
+                                    elif latest_4h_macd < 0:
+                                        logger.info("   4H MACD < 0，整體偏空頭環境")
+                                        print("   4H MACD < 0，整體偏空頭環境")
+                                    else:
+                                        logger.info("   4H MACD 接近 0，趨勢不明確")
+                                        print("   4H MACD 接近 0，趨勢不明確")
+                                        
+                                    if abs(latest_1h_macd) < 0.001:
+                                        logger.info("   1H MACD 直方圖過小，信號強度不足")
+                                        print("   1H MACD 直方圖過小，信號強度不足")
+                            else:
+                                logger.warning(f"⚠️ 數據時間驗證失敗 (第{retry_count}次): {data_validation['reason']}")
+                                print(f"⚠️ 數據時間驗證失敗 (第{retry_count}次): {data_validation['reason']}")
+                                
+                                if retry_count < max_retries:
+                                    wait_time = 30  # 等待30秒後重試
+                                    logger.info(f"⏳ 等待 {wait_time} 秒後重試...")
+                                    print(f"⏳ 等待 {wait_time} 秒後重試...")
+                                    time.sleep(wait_time)
+                        else:
+                            logger.warning(f"❌ 數據更新失敗 (第{retry_count}次)")
+                            print(f"❌ 數據更新失敗 (第{retry_count}次)")
+                            
+                            if retry_count < max_retries:
+                                wait_time = 30  # 等待30秒後重試
+                                logger.info(f"⏳ 等待 {wait_time} 秒後重試...")
+                                print(f"⏳ 等待 {wait_time} 秒後重試...")
+                                time.sleep(wait_time)
                     
+                    if not data_acquired:
+                        logger.error(f"❌ 經過 {max_retries} 次嘗試仍無法獲得正確數據，跳過本次檢查")
+                        print(f"❌ 經過 {max_retries} 次嘗試仍無法獲得正確數據，跳過本次檢查")
+                    
+                    # 記錄檢查完成
                     last_entry_check_hour = current_hour
+                    check_end_time = datetime.now()
+                    check_duration = (check_end_time - current_time).total_seconds()
                     
                     # 顯示統計信息
                     remaining_time = end_time - datetime.now()
                     remaining_hours = remaining_time.total_seconds() / 3600
+                    next_check_time = current_time.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+                    
+                    logger.info(f"✅ 本次檢查完成，耗時 {check_duration:.1f} 秒")
                     logger.info(f"📈 信號統計: 已檢測到 {signal_count} 個信號")
                     logger.info(f"⏳ 剩餘監測時間: {remaining_hours:.1f} 小時")
+                    logger.info(f"🕐 下次檢查時間: {next_check_time.strftime('%H:%M:%S')}")
+                    
+                    print(f"✅ 本次檢查完成，耗時 {check_duration:.1f} 秒")
                     print(f"📈 信號統計: 已檢測到 {signal_count} 個信號")
                     print(f"⏳ 剩餘監測時間: {remaining_hours:.1f} 小時")
+                    print(f"🕐 下次檢查時間: {next_check_time.strftime('%H:%M:%S')}")
                     print("-" * 60)
                 
-                # 每分鐘等待一次，降低CPU使用率
-                time.sleep(60)
+                # 每30秒檢查一次時間
+                time.sleep(30)
                 
             except KeyboardInterrupt:
                 logger.info("收到中斷信號，停止信號監測")
@@ -540,11 +639,89 @@ class MacdTradingStrategy:
                 print(f"❌ 信號監測錯誤: {e}")
                 time.sleep(60)  # 錯誤後等待1分鐘
         
+        # 記錄監測結束
+        logger.info("🏁 信號監測結束")
+        logger.info(f"📊 監測總結: 運行 {duration_hours} 小時，檢測到 {signal_count} 個信號")
+        
         return {
             'total_signals': signal_count,
             'monitoring_duration': duration_hours,
             'end_time': datetime.now().isoformat()
         }
+    
+    def _validate_data_timing(self, check_time: datetime) -> dict:
+        """
+        驗證數據時間是否正確
+        
+        Args:
+            check_time: 檢查時間
+            
+        Returns:
+            驗證結果字典
+        """
+        try:
+            # 獲取最新數據的時間戳
+            latest_1h_timestamp = pd.to_datetime(self.data_1h.index[-1])
+            latest_4h_timestamp = pd.to_datetime(self.data_4h.index[-1])
+            
+            # 期望的上一小時時間（整點）
+            expected_1h_time = check_time.replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
+            
+            # 期望的4小時時間（需要是4的倍數小時）
+            current_hour = check_time.hour
+            expected_4h_hour = (current_hour // 4) * 4
+            if expected_4h_hour == current_hour:
+                expected_4h_hour -= 4  # 如果當前就是4小時整點，取前一個4小時點
+            expected_4h_time = check_time.replace(hour=expected_4h_hour, minute=0, second=0, microsecond=0)
+            
+            # 時間差容忍度（5分鐘）
+            tolerance = timedelta(minutes=5)
+            
+            # 檢查1小時數據時間
+            time_diff_1h = abs(latest_1h_timestamp - expected_1h_time)
+            is_1h_valid = time_diff_1h <= tolerance
+            
+            # 檢查4小時數據時間
+            time_diff_4h = abs(latest_4h_timestamp - expected_4h_time)
+            is_4h_valid = time_diff_4h <= tolerance
+            
+            # 格式化時間字符串
+            latest_1h_str = latest_1h_timestamp.strftime('%m-%d %H:%M')
+            latest_4h_str = latest_4h_timestamp.strftime('%m-%d %H:%M')
+            expected_1h_str = expected_1h_time.strftime('%m-%d %H:%M')
+            expected_4h_str = expected_4h_time.strftime('%m-%d %H:%M')
+            
+            if is_1h_valid and is_4h_valid:
+                return {
+                    'valid': True,
+                    'latest_1h_time': latest_1h_str,
+                    'latest_4h_time': latest_4h_str,
+                    'data_info': f"1H最新: {latest_1h_str}, 4H最新: {latest_4h_str}",
+                    'reason': None
+                }
+            else:
+                reason_parts = []
+                if not is_1h_valid:
+                    reason_parts.append(f"1H數據時間異常 (期望: {expected_1h_str}, 實際: {latest_1h_str})")
+                if not is_4h_valid:
+                    reason_parts.append(f"4H數據時間異常 (期望: {expected_4h_str}, 實際: {latest_4h_str})")
+                
+                return {
+                    'valid': False,
+                    'latest_1h_time': latest_1h_str,
+                    'latest_4h_time': latest_4h_str,
+                    'data_info': f"1H最新: {latest_1h_str}, 4H最新: {latest_4h_str}",
+                    'reason': "; ".join(reason_parts)
+                }
+                
+        except Exception as e:
+            return {
+                'valid': False,
+                'latest_1h_time': 'N/A',
+                'latest_4h_time': 'N/A',
+                'data_info': 'N/A',
+                'reason': f"數據時間驗證異常: {e}"
+            }
     
     def get_performance_summary(self) -> dict:
         """
@@ -611,7 +788,7 @@ def main():
         # 設定運行時間
         print("🚀 MACD 信號監測系統啟動")
         print("📢 純提醒模式：只監測信號，不執行交易")
-        print("⚡ 監測頻率：每小時第5秒檢查進場信號")
+        print("⚡ 監測頻率：每小時整點檢查進場信號")
         print("🎲 檢測到信號時會提醒，手動下單後讓幣安自動執行")
         print("-" * 80)
         

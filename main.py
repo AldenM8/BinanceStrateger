@@ -34,7 +34,7 @@ def run_backtest_mode(days: int = None, initial_capital: float = 10000.0):
     return results
 
 
-def run_monitor_mode(duration_hours: int = 24):
+def run_monitor_mode(duration_hours: float = 24):
     """運行實時監控模式"""
     print("📡 啟動MACD策略實時監控模式")
     print("=" * 50)
@@ -57,7 +57,7 @@ def main():
                        help='回測天數 (僅適用於backtest模式)')
     parser.add_argument('--capital', type=float, default=10000.0,
                        help='初始資金 (僅適用於backtest模式)')
-    parser.add_argument('--hours', type=int, default=24,
+    parser.add_argument('--hours', type=float, default=24,
                        help='監控時長小時數 (僅適用於monitor模式)')
     
     args = parser.parse_args()
