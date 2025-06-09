@@ -444,12 +444,12 @@ class MacdTradingStrategy:
                 
                 # 每小時1秒時檢查進場信號
                 current_second = current_time.second
-                if (current_minute == 0 and current_second == 1 and current_hour != last_entry_check_hour):
-                    
+                # if (current_minute == 0 and current_second == 1 and current_hour != last_entry_check_hour):
+                if (1==1):
                     # 記錄檢查開始
                     check_time_str = current_time.strftime('%Y-%m-%d %H:%M:%S')
                     logger.info(f"⏰ {check_time_str} - 開始執行每小時信號檢查")
-                    print(f"\n⏰ {check_time_str} - 開始執行每小時信號檢查")
+                    print(f"\n⏰ {check_time_str} - 檢查信號")
                     
                     # 持續嘗試獲取正確的數據
                     data_acquired = False
@@ -461,10 +461,10 @@ class MacdTradingStrategy:
                         
                         if retry_count > 1:
                             logger.info(f"📡 第 {retry_count} 次嘗試獲取數據...")
-                            print(f"📡 第 {retry_count} 次嘗試獲取數據...")
+                            # print(f"📡 第 {retry_count} 次嘗試獲取數據...")
                         else:
                             logger.info("📡 開始更新市場數據...")
-                            print("📡 開始更新市場數據...")
+                            # print("📡 開始更新市場數據...")
                         
                         if self.update_market_data():
                             # 驗證數據時間是否正確
@@ -477,34 +477,38 @@ class MacdTradingStrategy:
                                 
                                 # 獲取當前價格信息
                                 current_price = self.data_provider.get_current_price(self.symbol)
-                                latest_1h_close = self.data_1h['close'].iloc[-1]
-                                latest_4h_close = self.data_4h['close'].iloc[-1]
+                                
+                                # 獲取1小時K線數據（已完成的）
+                                latest_1h_open = self.data_1h['open'].iloc[-2]
+                                latest_1h_high = self.data_1h['high'].iloc[-2]
+                                latest_1h_low = self.data_1h['low'].iloc[-2]
+                                latest_1h_close = self.data_1h['close'].iloc[-2]
                                 
                                 # 獲取已完成K線的 MACD 數據（用於交易判斷）
-                                # 使用 iloc[-2] 是已完成的K線，iloc[-1] 是進行中的K線
                                 latest_1h_macd = self.data_1h['macd_histogram'].iloc[-2]  # 已完成的1小時K線
-                                latest_4h_macd = self.data_4h['macd_histogram'].iloc[-1]  # 4小時可以用當前進行中的
+                                prev_1h_macd = self.data_1h['macd_histogram'].iloc[-3] if len(self.data_1h) > 2 else 0
+                                latest_4h_macd = self.data_4h['macd_histogram'].iloc[-1]  # 4小時當前進行中的
                                 
-                                # 記錄市場狀態
+                                # 獲取1小時K線時間範圍
+                                latest_1h_time = self.data_1h.index[-2]
+                                if hasattr(latest_1h_time, 'tz') and latest_1h_time.tz is not None:
+                                    latest_1h_time = latest_1h_time.tz_localize(None)
+                                latest_1h_time_local = latest_1h_time + timedelta(hours=8)
+                                time_range_str = f"{latest_1h_time_local.strftime('%H:%M')}-{(latest_1h_time_local + timedelta(hours=1)).strftime('%H:%M')}"
+                                
+                                # 簡化輸出：只顯示關鍵信息
+                                print(f"📊 1H [{time_range_str}] OHLC: ${latest_1h_open:.2f}/{latest_1h_high:.2f}/{latest_1h_low:.2f}/{latest_1h_close:.2f}")
+                                print(f"📈 1H MACD: 當前={latest_1h_macd:.4f}, 前根={prev_1h_macd:.4f}")
+                                print(f"📈 4H MACD: {latest_4h_macd:.4f}")
+                                
                                 logger.info(f"💰 當前市場價格:")
                                 logger.info(f"   即時價格: ${current_price:.4f}" if current_price else "   即時價格: 獲取失敗")
-                                logger.info(f"   1H 收盤價: ${latest_1h_close:.4f} ({data_validation['latest_1h_time']})")
-                                logger.info(f"   4H 收盤價: ${latest_4h_close:.4f} ({data_validation['latest_4h_time']})")
                                 logger.info(f"📊 MACD 指標狀態:")
                                 logger.info(f"   1H MACD 直方圖: {latest_1h_macd:.6f}")
                                 logger.info(f"   4H MACD 直方圖: {latest_4h_macd:.6f}")
                                 
-                                print(f"💰 當前市場價格:")
-                                print(f"   即時價格: ${current_price:.4f}" if current_price else "   即時價格: 獲取失敗")
-                                print(f"   1H 收盤價: ${latest_1h_close:.4f} ({data_validation['latest_1h_time']})")
-                                print(f"   4H 收盤價: ${latest_4h_close:.4f} ({data_validation['latest_4h_time']})")
-                                print(f"📊 MACD 指標狀態:")
-                                print(f"   1H MACD 直方圖: {latest_1h_macd:.6f}")
-                                print(f"   4H MACD 直方圖: {latest_4h_macd:.6f}")
-                                
                                 # 檢查進場信號
                                 logger.info("🔍 開始分析進場信號...")
-                                print("🔍 開始分析進場信號...")
                                 
                                 signal = self.check_entry_signals()
                                 if signal:
@@ -534,26 +538,18 @@ class MacdTradingStrategy:
                                     logger.info(f"📈 風險報酬比: 1:{config.RISK_REWARD_RATIO}")
                                     logger.info(f"📏 ATR 值: {atr:.4f}")
                                     
-                                    print(f"\n🚨🚨🚨 檢測到 {signal_type} 進場信號！🚨🚨🚨")
-                                    print(f"🎯 建議交易參數：")
-                                    print(f"   方向: {signal_type}")
-                                    print(f"   建議進場價: ${current_price:.2f}")
-                                    print(f"   建議停損: ${suggested_stop_loss:.2f}")
-                                    print(f"   建議停利: ${suggested_take_profit:.2f}")
-                                    print(f"   槓桿倍數: {config.LEVERAGE}x")
-                                    print(f"   倉位比例: {config.POSITION_SIZE * 100}%")
-                                    print(f"   風險報酬比: 1:{config.RISK_REWARD_RATIO}")
-                                    print(f"   ATR 值: {atr:.2f}")
-                                    print(f"   停損距離: {abs(current_price - suggested_stop_loss):.2f} ({abs(current_price - suggested_stop_loss)/current_price*100:.2f}%)")
-                                    print(f"   停利距離: {abs(suggested_take_profit - current_price):.2f} ({abs(suggested_take_profit - current_price)/current_price*100:.2f}%)")
-                                    print(f"🎲 請手動到 Binance 下{config.LEVERAGE}x槓桿合約，設置對應的停損停利")
-                                    print("=" * 80)
+                                    print(f"🚨 【{signal_type} 進場信號】")
+                                    print(f"⏰ 進場時間: {check_time_str}")
+                                    print(f"💰 進場價格: ${current_price:.2f}")
+                                    print(f"🛡️ 停損價格: ${suggested_stop_loss:.2f}")
+                                    print(f"🎯 停利價格: ${suggested_take_profit:.2f}")
+                                    print("=" * 50)
                                     
                                 else:
                                     logger.info("📊 本次檢查無進場信號")
-                                    print("📊 本次檢查無進場信號")
+                                    print("❌ 無進場信號")
                                     
-                                    # 記錄詳細的無信號原因
+                                    # 記錄詳細的無信號原因到日誌
                                     logger.info("📋 信號分析詳情:")
                                     
                                     # 檢查1小時MACD狀態
@@ -571,20 +567,16 @@ class MacdTradingStrategy:
                                     else:
                                         logger.info("   1H MACD 未出現轉向信號")
                                     
-                                    # 4小時趨勢分析
+                                    # 4小時趋势分析（只记录到日志，不显示到控制台）
                                     if latest_4h_macd > 0:
                                         logger.info("   4H MACD > 0，整體偏多頭環境")
-                                        print("   4H MACD > 0，整體偏多頭環境")
                                     elif latest_4h_macd < 0:
                                         logger.info("   4H MACD < 0，整體偏空頭環境")
-                                        print("   4H MACD < 0，整體偏空頭環境")
                                     else:
                                         logger.info("   4H MACD 接近 0，趨勢不明確")
-                                        print("   4H MACD 接近 0，趨勢不明確")
                                         
                                     if abs(latest_1h_macd) < 0.001:
                                         logger.info("   1H MACD 直方圖過小，信號強度不足")
-                                        print("   1H MACD 直方圖過小，信號強度不足")
                             else:
                                 logger.warning(f"⚠️ 數據時間驗證失敗 (第{retry_count}次): {data_validation['reason']}")
                                 print(f"⚠️ 數據時間驗證失敗 (第{retry_count}次): {data_validation['reason']}")
@@ -623,11 +615,8 @@ class MacdTradingStrategy:
                     logger.info(f"⏳ 剩餘監測時間: {remaining_hours:.1f} 小時")
                     logger.info(f"🕐 下次檢查時間: {next_check_time.strftime('%H:%M:%S')}")
                     
-                    print(f"✅ 本次檢查完成，耗時 {check_duration:.1f} 秒")
-                    print(f"📈 信號統計: 已檢測到 {signal_count} 個信號")
-                    print(f"⏳ 剩餘監測時間: {remaining_hours:.1f} 小時")
-                    print(f"🕐 下次檢查時間: {next_check_time.strftime('%H:%M:%S')}")
-                    print("-" * 60)
+                    print(f"🕐 下次檢查: {next_check_time.strftime('%H:%M:%S')} (信號數: {signal_count})")
+                    print("-" * 40)
                 
                 # 每1秒檢查一次時間，確保能準確捕捉到整點1秒
                 time.sleep(1)
