@@ -151,6 +151,7 @@ data/raw/
 data/processed/
 logs/*.log
 logs/*.txt
+logs/*.png
 *.tmp
 *.temp
 *.backup
@@ -163,6 +164,10 @@ historical_data/
 *.csv
 *.xlsx
 *.json.backup
+
+# Backtest charts and reports
+backtest_equity_curve_*.png
+test_chart*.png
 
 # API keys and secrets
 .env.local

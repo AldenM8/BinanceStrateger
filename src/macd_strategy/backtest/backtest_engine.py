@@ -11,6 +11,9 @@ import sys
 import os
 import logging
 from pathlib import Path
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+from matplotlib import rcParams
 
 # 處理相對導入問題
 try:
@@ -37,6 +40,10 @@ except ImportError:
         print(f"❌ 無法導入必要模組: {e}")
         print("請確保從專案根目錄執行程式，或使用 main.py 作為入口點")
         sys.exit(1)
+
+# 設定中文字體
+plt.rcParams['font.sans-serif'] = ['Microsoft JhengHei', 'SimHei', 'Arial Unicode MS']
+plt.rcParams['axes.unicode_minus'] = False
 
 # 設定台灣時區 (UTC+8)
 TAIWAN_TZ = timezone(timedelta(hours=8))
@@ -157,6 +164,9 @@ class BacktestEngine:
         notional_value = 0  # 名義價值
         trades = []
         
+        # 總資產變化追蹤
+        equity_curve = []
+        
         # 待進場信號
         pending_signal = None  # {'type': 'long'/'short', 'atr': value, 'time': time}
         
@@ -172,6 +182,27 @@ class BacktestEngine:
             current_high = row['high']    # 當前K線最高價
             current_low = row['low']      # 當前K線最低價
             current_open = row['open']    # 當前K線開盤價
+            
+            # 計算當前總資產（包含持倉浮盈浮虧）
+            current_equity = capital
+            if position is not None:
+                # 計算持倉的浮動損益
+                if position == 'long':
+                    unrealized_pnl = (current_price - entry_price) * position_size
+                else:  # short
+                    unrealized_pnl = (entry_price - current_price) * position_size
+                
+                # 總資產 = 可用資金 + 占用保證金 + 浮動損益
+                current_equity = capital + margin_used + unrealized_pnl
+            
+            # 記錄資產變化
+            equity_curve.append({
+                'timestamp': current_time,
+                'equity': current_equity,
+                'price': current_price,
+                'position': position,
+                'unrealized_pnl': unrealized_pnl if position is not None else 0
+            })
             
             # 獲取對應的分析數據（使用完整數據進行信號分析）
             data_4h_filtered = analysis_data_4h[analysis_data_4h.index <= current_time]
@@ -440,7 +471,8 @@ class BacktestEngine:
             'avg_win': avg_win,
             'avg_loss': avg_loss,
             'best_trade': best_trade,
-            'worst_trade': worst_trade
+            'worst_trade': worst_trade,
+            'equity_curve': equity_curve
         }
     
     def calculate_buy_hold_return(self, data: pd.DataFrame) -> float:
@@ -451,6 +483,138 @@ class BacktestEngine:
         initial_price = data['close'].iloc[0]
         final_price = data['close'].iloc[-1]
         return (final_price - initial_price) / initial_price * 100
+    
+    def plot_equity_curve(self, results: Dict, symbol: str = None, save_path: str = None) -> None:
+        """
+        繪製總資產變化折線圖
+        
+        Args:
+            results: 回測結果字典
+            symbol: 交易對符號
+            save_path: 圖片保存路徑（可選）
+        """
+        if not results or 'equity_curve' not in results:
+            print("❌ 無資產變化數據，無法繪製圖表")
+            return
+        
+        equity_data = results['equity_curve']
+        if not equity_data:
+            print("❌ 資產變化數據為空，無法繪製圖表")
+            return
+        
+        # 轉換為DataFrame
+        df = pd.DataFrame(equity_data)
+        df['timestamp'] = pd.to_datetime(df['timestamp'])
+        
+        # 計算買入持有基準線
+        initial_price = df['price'].iloc[0]
+        df['buy_hold_value'] = results['initial_capital'] * (df['price'] / initial_price)
+        
+        # 創建圖表
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(15, 10))
+        
+        # 上圖：資產變化曲線
+        ax1.plot(df['timestamp'], df['equity'], label='策略總資產', linewidth=2, color='#2E86AB')
+        ax1.plot(df['timestamp'], df['buy_hold_value'], label='買入持有基準', 
+                linewidth=1, linestyle='--', color='#A23B72', alpha=0.7)
+        ax1.axhline(y=results['initial_capital'], color='gray', linestyle=':', alpha=0.5, label='初始資金')
+        
+        # 標記交易點
+        trades = results.get('trades', [])
+        for trade in trades:
+            entry_time = pd.to_datetime(trade['entry_time'])
+            exit_time = pd.to_datetime(trade['exit_time'])
+            
+            # find closest equity points
+            entry_idx = df['timestamp'].sub(entry_time).abs().idxmin()
+            exit_idx = df['timestamp'].sub(exit_time).abs().idxmin()
+            
+            if trade['side'] == 'long':
+                ax1.scatter(entry_time, df.loc[entry_idx, 'equity'], 
+                           color='green', marker='^', s=50, alpha=0.8)
+                color = 'red' if trade['pnl'] < 0 else 'green'
+                ax1.scatter(exit_time, df.loc[exit_idx, 'equity'], 
+                           color=color, marker='v', s=50, alpha=0.8)
+            else:  # short
+                ax1.scatter(entry_time, df.loc[entry_idx, 'equity'], 
+                           color='red', marker='v', s=50, alpha=0.8)
+                color = 'red' if trade['pnl'] < 0 else 'green'
+                ax1.scatter(exit_time, df.loc[exit_idx, 'equity'], 
+                           color=color, marker='^', s=50, alpha=0.8)
+        
+        ax1.set_title(f'{symbol or config.SYMBOL} MACD 策略回測 - 總資產變化', fontsize=16, fontweight='bold')
+        ax1.set_ylabel('總資產 (USDT)', fontsize=12)
+        ax1.legend()
+        ax1.grid(True, alpha=0.3)
+        
+        # 格式化x軸日期
+        ax1.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d'))
+        ax1.xaxis.set_major_locator(mdates.DayLocator(interval=max(1, len(df)//10)))
+        
+        # 下圖：價格走勢
+        ax2.plot(df['timestamp'], df['price'], label='價格', linewidth=1, color='#F18F01')
+        
+        # 標記交易點
+        for trade in trades:
+            entry_time = pd.to_datetime(trade['entry_time'])
+            exit_time = pd.to_datetime(trade['exit_time'])
+            
+            if trade['side'] == 'long':
+                ax2.scatter(entry_time, trade['entry_price'], 
+                           color='green', marker='^', s=50, alpha=0.8)
+                color = 'red' if trade['pnl'] < 0 else 'green'
+                ax2.scatter(exit_time, trade['exit_price'], 
+                           color=color, marker='v', s=50, alpha=0.8)
+            else:  # short
+                ax2.scatter(entry_time, trade['entry_price'], 
+                           color='red', marker='v', s=50, alpha=0.8)
+                color = 'red' if trade['pnl'] < 0 else 'green'
+                ax2.scatter(exit_time, trade['exit_price'], 
+                           color=color, marker='^', s=50, alpha=0.8)
+        
+        ax2.set_title('價格走勢與交易點', fontsize=14)
+        ax2.set_xlabel('日期', fontsize=12)
+        ax2.set_ylabel('價格 (USDT)', fontsize=12)
+        ax2.legend()
+        ax2.grid(True, alpha=0.3)
+        
+        # 格式化x軸日期
+        ax2.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d'))
+        ax2.xaxis.set_major_locator(mdates.DayLocator(interval=max(1, len(df)//10)))
+        
+        # 添加統計信息文本框
+        stats_text = f"""回測統計:
+初始資金: ${results['initial_capital']:,.0f}
+最終資金: ${results['final_capital']:,.0f}
+總收益: ${results['total_pnl']:+,.0f}
+總報酬率: {results['total_return']:+.1f}%
+交易次數: {results['total_trades']}
+勝率: {results['win_rate']:.1f}%"""
+        
+        ax1.text(0.02, 0.98, stats_text, transform=ax1.transAxes, fontsize=10,
+                verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+        
+        # 調整布局
+        plt.tight_layout()
+        
+        # 保存圖表
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            print(f"📊 資產變化圖表已保存至: {save_path}")
+        else:
+            # 確保logs目錄存在
+            import os
+            logs_dir = "logs"
+            os.makedirs(logs_dir, exist_ok=True)
+            
+            # 默認保存路徑到logs資料夾
+            filename = f"backtest_equity_curve_{symbol or config.SYMBOL}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+            default_path = os.path.join(logs_dir, filename)
+            plt.savefig(default_path, dpi=300, bbox_inches='tight')
+            print(f"📊 資產變化圖表已保存至: {default_path}")
+        
+        # 關閉圖表以釋放內存
+        plt.close()
 
 
 def run_backtest(symbol: str = None, days: Optional[int] = None, 
@@ -566,6 +730,18 @@ def run_backtest(symbol: str = None, days: Optional[int] = None,
     
     # 計算買入持有基準
     buy_hold_return = engine.calculate_buy_hold_return(data_1h_with_indicators)
+    
+    # 生成資產變化折線圖
+    print("📊 生成資產變化圖表...")
+    # 確保logs目錄存在
+    import os
+    logs_dir = "logs"
+    os.makedirs(logs_dir, exist_ok=True)
+    
+    # 指定圖表保存路徑到logs資料夾
+    chart_filename = f"backtest_equity_curve_{symbol}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+    chart_path = os.path.join(logs_dir, chart_filename)
+    engine.plot_equity_curve(results, symbol=symbol, save_path=chart_path)
     
     # 顯示回測報告
     print()
