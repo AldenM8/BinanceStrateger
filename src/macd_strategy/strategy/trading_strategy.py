@@ -442,8 +442,9 @@ class MacdTradingStrategy:
                 current_hour = current_time.hour
                 current_minute = current_time.minute
                 
-                # 每小時整點開始檢查進場信號
-                if (current_minute == 0 and current_hour != last_entry_check_hour):
+                # 每小時1秒時檢查進場信號
+                current_second = current_time.second
+                if (current_minute == 0 and current_second == 1 and current_hour != last_entry_check_hour):
                     
                     # 記錄檢查開始
                     check_time_str = current_time.strftime('%Y-%m-%d %H:%M:%S')
@@ -479,9 +480,10 @@ class MacdTradingStrategy:
                                 latest_1h_close = self.data_1h['close'].iloc[-1]
                                 latest_4h_close = self.data_4h['close'].iloc[-1]
                                 
-                                # 獲取最新的 MACD 數據
-                                latest_1h_macd = self.data_1h['macd_histogram'].iloc[-1]
-                                latest_4h_macd = self.data_4h['macd_histogram'].iloc[-1]
+                                # 獲取已完成K線的 MACD 數據（用於交易判斷）
+                                # 使用 iloc[-2] 是已完成的K線，iloc[-1] 是進行中的K線
+                                latest_1h_macd = self.data_1h['macd_histogram'].iloc[-2]  # 已完成的1小時K線
+                                latest_4h_macd = self.data_4h['macd_histogram'].iloc[-1]  # 4小時可以用當前進行中的
                                 
                                 # 記錄市場狀態
                                 logger.info(f"💰 當前市場價格:")
@@ -555,7 +557,7 @@ class MacdTradingStrategy:
                                     logger.info("📋 信號分析詳情:")
                                     
                                     # 檢查1小時MACD狀態
-                                    prev_1h_macd = self.data_1h['macd_histogram'].iloc[-2] if len(self.data_1h) > 1 else 0
+                                    prev_1h_macd = self.data_1h['macd_histogram'].iloc[-3] if len(self.data_1h) > 2 else 0
                                     logger.info(f"   1H MACD: 當前={latest_1h_macd:.6f}, 前一根={prev_1h_macd:.6f}")
                                     
                                     if latest_1h_macd > 0 and prev_1h_macd <= 0:
@@ -588,7 +590,7 @@ class MacdTradingStrategy:
                                 print(f"⚠️ 數據時間驗證失敗 (第{retry_count}次): {data_validation['reason']}")
                                 
                                 if retry_count < max_retries:
-                                    wait_time = 30  # 等待30秒後重試
+                                    wait_time = 1  # 等待1秒後重試
                                     logger.info(f"⏳ 等待 {wait_time} 秒後重試...")
                                     print(f"⏳ 等待 {wait_time} 秒後重試...")
                                     time.sleep(wait_time)
@@ -597,7 +599,7 @@ class MacdTradingStrategy:
                             print(f"❌ 數據更新失敗 (第{retry_count}次)")
                             
                             if retry_count < max_retries:
-                                wait_time = 30  # 等待30秒後重試
+                                wait_time = 1  # 等待1秒後重試
                                 logger.info(f"⏳ 等待 {wait_time} 秒後重試...")
                                 print(f"⏳ 等待 {wait_time} 秒後重試...")
                                 time.sleep(wait_time)
@@ -614,7 +616,7 @@ class MacdTradingStrategy:
                     # 顯示統計信息
                     remaining_time = end_time - datetime.now()
                     remaining_hours = remaining_time.total_seconds() / 3600
-                    next_check_time = current_time.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+                    next_check_time = current_time.replace(minute=0, second=1, microsecond=0) + timedelta(hours=1)
                     
                     logger.info(f"✅ 本次檢查完成，耗時 {check_duration:.1f} 秒")
                     logger.info(f"📈 信號統計: 已檢測到 {signal_count} 個信號")
@@ -627,8 +629,8 @@ class MacdTradingStrategy:
                     print(f"🕐 下次檢查時間: {next_check_time.strftime('%H:%M:%S')}")
                     print("-" * 60)
                 
-                # 每30秒檢查一次時間
-                time.sleep(30)
+                # 每1秒檢查一次時間，確保能準確捕捉到整點1秒
+                time.sleep(1)
                 
             except KeyboardInterrupt:
                 logger.info("收到中斷信號，停止信號監測")
@@ -654,42 +656,71 @@ class MacdTradingStrategy:
         驗證數據時間是否正確
         
         Args:
-            check_time: 檢查時間
+            check_time: 檢查時間 (本地時間 UTC+8，比如10:00:01)
             
         Returns:
             驗證結果字典
         """
         try:
-            # 獲取最新數據的時間戳
+            # 獲取最新數據的時間戳（API返回的是UTC時間）
             latest_1h_timestamp = pd.to_datetime(self.data_1h.index[-1])
             latest_4h_timestamp = pd.to_datetime(self.data_4h.index[-1])
             
-            # 期望的上一小時時間（整點）
-            expected_1h_time = check_time.replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
+            # 統一處理時區問題 - 移除時區信息
+            if latest_1h_timestamp.tz is not None:
+                latest_1h_timestamp = latest_1h_timestamp.tz_localize(None)
+            if latest_4h_timestamp.tz is not None:
+                latest_4h_timestamp = latest_4h_timestamp.tz_localize(None)
             
-            # 期望的4小時時間（需要是4的倍數小時）
-            current_hour = check_time.hour
-            expected_4h_hour = (current_hour // 4) * 4
-            if expected_4h_hour == current_hour:
-                expected_4h_hour -= 4  # 如果當前就是4小時整點，取前一個4小時點
-            expected_4h_time = check_time.replace(hour=expected_4h_hour, minute=0, second=0, microsecond=0)
+            # 確保check_time也沒有時區信息
+            if hasattr(check_time, 'tz') and check_time.tz is not None:
+                check_time = check_time.replace(tzinfo=None)
             
-            # 時間差容忍度（5分鐘）
-            tolerance = timedelta(minutes=5)
+            # 將本地時間（UTC+8）轉換為UTC時間進行比較
+            utc_check_time = check_time - timedelta(hours=8)
             
-            # 檢查1小時數據時間
-            time_diff_1h = abs(latest_1h_timestamp - expected_1h_time)
-            is_1h_valid = time_diff_1h <= tolerance
+            # ===== 1小時線邏輯 =====
+            # 在11:00:01檢查時，API會返回11:00開盤的進行中K線
+            # 但我們要用10:00的已完成K線來做交易判斷
+            # 所以期望API返回的最新K線是當前小時（11:00）
+            expected_1h_time_utc = utc_check_time.replace(minute=0, second=0, microsecond=0)
             
-            # 檢查4小時數據時間
-            time_diff_4h = abs(latest_4h_timestamp - expected_4h_time)
-            is_4h_valid = time_diff_4h <= tolerance
+            # ===== 4小時線邏輯 =====
+            # 在10:00:01檢查時，要看當前4小時週期（8-12點）的開盤時間
+            # 計算當前所在的4小時週期起始點
+            local_current_hour = check_time.hour
+            current_4h_start_local = (local_current_hour // 4) * 4
             
-            # 格式化時間字符串
-            latest_1h_str = latest_1h_timestamp.strftime('%m-%d %H:%M')
-            latest_4h_str = latest_4h_timestamp.strftime('%m-%d %H:%M')
-            expected_1h_str = expected_1h_time.strftime('%m-%d %H:%M')
-            expected_4h_str = expected_4h_time.strftime('%m-%d %H:%M')
+            # 轉換為UTC時間的4小時週期起始點
+            utc_4h_start_hour = (current_4h_start_local - 8) % 24
+            if current_4h_start_local < 8:
+                # 如果本地時間的4小時週期起始點在8點之前，需要看前一天
+                expected_4h_time_utc = (utc_check_time - timedelta(days=1)).replace(
+                    hour=utc_4h_start_hour, minute=0, second=0, microsecond=0)
+            else:
+                expected_4h_time_utc = utc_check_time.replace(
+                    hour=utc_4h_start_hour, minute=0, second=0, microsecond=0)
+            
+            # 計算時間差（小時為單位）
+            time_diff_1h_hours = (latest_1h_timestamp - expected_1h_time_utc).total_seconds() / 3600
+            time_diff_4h_hours = (latest_4h_timestamp - expected_4h_time_utc).total_seconds() / 3600
+            
+            # 驗證邏輯：
+            # 1小時線：容忍度2小時，如果差異超過2小時就需要重試
+            # 4小時線：檢查是否有當前週期的數據
+            is_1h_valid = abs(time_diff_1h_hours) < 2.0
+            is_4h_valid = time_diff_4h_hours >= 0 and time_diff_4h_hours < 4.0  # 當前4小時週期內的數據
+            
+            # 格式化時間字符串（轉換為本地時間顯示）
+            latest_1h_local = latest_1h_timestamp + timedelta(hours=8)  # UTC轉換為UTC+8
+            latest_4h_local = latest_4h_timestamp + timedelta(hours=8)  # UTC轉換為UTC+8
+            expected_1h_local = expected_1h_time_utc + timedelta(hours=8)  # UTC轉換為UTC+8
+            expected_4h_local = expected_4h_time_utc + timedelta(hours=8)  # UTC轉換為UTC+8
+            
+            latest_1h_str = latest_1h_local.strftime('%m-%d %H:%M')
+            latest_4h_str = latest_4h_local.strftime('%m-%d %H:%M')
+            expected_1h_str = expected_1h_local.strftime('%m-%d %H:%M')
+            expected_4h_str = expected_4h_local.strftime('%m-%d %H:%M')
             
             if is_1h_valid and is_4h_valid:
                 return {
@@ -702,9 +733,18 @@ class MacdTradingStrategy:
             else:
                 reason_parts = []
                 if not is_1h_valid:
-                    reason_parts.append(f"1H數據時間異常 (期望: {expected_1h_str}, 實際: {latest_1h_str})")
+                    if abs(time_diff_1h_hours) >= 2.0:
+                        reason_parts.append(f"1H數據延遲過大 (期望: {expected_1h_str}, 實際: {latest_1h_str}, 差異: {time_diff_1h_hours:+.1f}小時)")
+                    else:
+                        reason_parts.append(f"1H數據時間異常 (期望: {expected_1h_str}, 實際: {latest_1h_str}, 差異: {time_diff_1h_hours:+.1f}小時)")
+                
                 if not is_4h_valid:
-                    reason_parts.append(f"4H數據時間異常 (期望: {expected_4h_str}, 實際: {latest_4h_str})")
+                    if time_diff_4h_hours < 0:
+                        reason_parts.append(f"4H數據未更新 (期望當前週期: {expected_4h_str}, 實際: {latest_4h_str}, 差異: {time_diff_4h_hours:+.1f}小時)")
+                    elif time_diff_4h_hours >= 4.0:
+                        reason_parts.append(f"4H數據過新 (期望當前週期: {expected_4h_str}, 實際: {latest_4h_str}, 差異: {time_diff_4h_hours:+.1f}小時)")
+                    else:
+                        reason_parts.append(f"4H數據異常 (期望當前週期: {expected_4h_str}, 實際: {latest_4h_str}, 差異: {time_diff_4h_hours:+.1f}小時)")
                 
                 return {
                     'valid': False,
