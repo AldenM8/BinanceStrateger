@@ -444,8 +444,7 @@ class MacdTradingStrategy:
                 
                 # 每小時1秒時檢查進場信號
                 current_second = current_time.second
-                # if (current_minute == 0 and current_second == 1 and current_hour != last_entry_check_hour):
-                if (1==1):
+                if (current_minute == 0 and current_second == 1 and current_hour != last_entry_check_hour):
                     # 記錄檢查開始
                     check_time_str = current_time.strftime('%Y-%m-%d %H:%M:%S')
                     logger.info(f"⏰ {check_time_str} - 開始執行每小時信號檢查")
