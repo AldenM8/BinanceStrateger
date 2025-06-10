@@ -540,60 +540,134 @@ class MacdTradingStrategy:
                                     atr = signal.get('atr', self.data_1h['atr'].iloc[-1])
                                     
                                     signal_type = signal['side'].upper()
-                                    if signal['side'] == 'long':
-                                        suggested_stop_loss = current_price - (atr * config.STOP_LOSS_MULTIPLIER)
-                                        suggested_take_profit = current_price + (atr * config.STOP_LOSS_MULTIPLIER * config.RISK_REWARD_RATIO)
-                                    else:  # short
-                                        suggested_stop_loss = current_price + (atr * config.STOP_LOSS_MULTIPLIER)
-                                        suggested_take_profit = current_price - (atr * config.STOP_LOSS_MULTIPLIER * config.RISK_REWARD_RATIO)
                                     
-                                    # 🚨 重要信號提醒
+                                    # 詳細計算過程記錄到log
                                     logger.info(f"🚨🚨🚨 檢測到 {signal_type} 進場信號！🚨🚨🚨")
-                                    logger.info(f"📊 建議進場價格: ${current_price:.4f}")
-                                    logger.info(f"🛡️ 建議停損價格: ${suggested_stop_loss:.4f}")
-                                    logger.info(f"🎯 建議停利價格: ${suggested_take_profit:.4f}")
-                                    logger.info(f"📈 風險報酬比: 1:{config.RISK_REWARD_RATIO}")
-                                    logger.info(f"📏 ATR 值: {atr:.4f}")
+                                    logger.info(f"📊 信號詳細計算過程:")
+                                    logger.info(f"   基礎數據:")
+                                    logger.info(f"   - 當前價格: ${current_price:.4f}")
+                                    logger.info(f"   - ATR 值: {atr:.4f}")
+                                    logger.info(f"   - 停損倍數: {config.STOP_LOSS_MULTIPLIER}")
+                                    logger.info(f"   - 風險報酬比: 1:{config.RISK_REWARD_RATIO}")
+                                    logger.info(f"   - 倉位大小: {config.POSITION_SIZE * 100}%")
                                     
-                                    print(f"🚨 【{signal_type} 進場信號】")
-                                    print(f"⏰ 進場時間: {check_time_str}")
-                                    print(f"💰 進場價格: ${current_price:.2f}")
-                                    print(f"🛡️ 停損價格: ${suggested_stop_loss:.2f}")
-                                    print(f"🎯 停利價格: ${suggested_take_profit:.2f}")
-                                    print("=" * 50)
+                                    if signal['side'] == 'long':
+                                        stop_loss_distance = atr * config.STOP_LOSS_MULTIPLIER
+                                        take_profit_distance = stop_loss_distance * config.RISK_REWARD_RATIO
+                                        suggested_stop_loss = current_price - stop_loss_distance
+                                        suggested_take_profit = current_price + take_profit_distance
+                                        
+                                        logger.info(f"   做多計算:")
+                                        logger.info(f"   - 停損距離 = ATR × 停損倍數 = {atr:.4f} × {config.STOP_LOSS_MULTIPLIER} = {stop_loss_distance:.4f}")
+                                        logger.info(f"   - 停利距離 = 停損距離 × 風報比 = {stop_loss_distance:.4f} × {config.RISK_REWARD_RATIO} = {take_profit_distance:.4f}")
+                                        logger.info(f"   - 停損價格 = 進場價 - 停損距離 = {current_price:.4f} - {stop_loss_distance:.4f} = {suggested_stop_loss:.4f}")
+                                        logger.info(f"   - 停利價格 = 進場價 + 停利距離 = {current_price:.4f} + {take_profit_distance:.4f} = {suggested_take_profit:.4f}")
+                                    else:  # short
+                                        stop_loss_distance = atr * config.STOP_LOSS_MULTIPLIER
+                                        take_profit_distance = stop_loss_distance * config.RISK_REWARD_RATIO
+                                        suggested_stop_loss = current_price + stop_loss_distance
+                                        suggested_take_profit = current_price - take_profit_distance
+                                        
+                                        logger.info(f"   做空計算:")
+                                        logger.info(f"   - 停損距離 = ATR × 停損倍數 = {atr:.4f} × {config.STOP_LOSS_MULTIPLIER} = {stop_loss_distance:.4f}")
+                                        logger.info(f"   - 停利距離 = 停損距離 × 風報比 = {stop_loss_distance:.4f} × {config.RISK_REWARD_RATIO} = {take_profit_distance:.4f}")
+                                        logger.info(f"   - 停損價格 = 進場價 + 停損距離 = {current_price:.4f} + {stop_loss_distance:.4f} = {suggested_stop_loss:.4f}")
+                                        logger.info(f"   - 停利價格 = 進場價 - 停利距離 = {current_price:.4f} - {take_profit_distance:.4f} = {suggested_take_profit:.4f}")
+                                    
+                                    # 計算潛在盈虧
+                                    risk_amount = abs(current_price - suggested_stop_loss)
+                                    reward_amount = abs(suggested_take_profit - current_price)
+                                    actual_risk_reward = reward_amount / risk_amount if risk_amount > 0 else 0
+                                    
+                                    logger.info(f"   風險管理:")
+                                    logger.info(f"   - 風險金額: ${risk_amount:.4f}")
+                                    logger.info(f"   - 報酬金額: ${reward_amount:.4f}")
+                                    logger.info(f"   - 實際風報比: 1:{actual_risk_reward:.2f}")
+                                    
+                                    # 簡潔的控制台輸出
+                                    print(f"🚨 【{signal_type} 信號】 ${current_price:.2f}")
+                                    print(f"🛡️ 停損: ${suggested_stop_loss:.2f} | 🎯 停利: ${suggested_take_profit:.2f} | 📊 風報比: 1:{actual_risk_reward:.1f}")
+                                    print("=" * 60)
                                     
                                 else:
                                     logger.info("📊 本次檢查無進場信號")
-                                    print("❌ 無進場信號")
                                     
-                                    # 記錄詳細的無信號原因到日誌
-                                    logger.info("📋 信號分析詳情:")
+                                    # 獲取詳細的信號分析結果 - 詳細分析記錄到log
+                                    long_analysis = self.signal_analyzer.analyze_long_signal(self.data_4h, self.data_1h)
+                                    short_analysis = self.signal_analyzer.analyze_short_signal(self.data_4h, self.data_1h)
                                     
-                                    # 檢查1小時MACD狀態
+                                    # 詳細分析記錄到日誌
+                                    logger.info("📋 詳細信號分析:")
+                                    
+                                    # 分析做多信號失敗原因
+                                    if 'details' in long_analysis and 'stop_reason' in long_analysis['details']:
+                                        logger.info(f"   做多信號: {long_analysis['details']['stop_reason']}")
+                                        
+                                        # 詳細條件檢查記錄到log
+                                        if 'conditions' in long_analysis:
+                                            for condition, result in long_analysis['conditions'].items():
+                                                status = "✅" if result else "❌"
+                                                if condition == 'step1_first_positive':
+                                                    desc = "1H MACD剛轉正"
+                                                elif condition == 'step2_enough_negative':
+                                                    desc = "前段負值足夠"
+                                                elif condition == 'step3_4h_positive':
+                                                    desc = "4H MACD為正"
+                                                else:
+                                                    desc = condition
+                                                logger.info(f"      {status} {desc}: {result}")
+                                        
+                                        # 連續負值統計記錄到log
+                                        if 'consecutive_negative_count' in long_analysis['details']:
+                                            count = long_analysis['details']['consecutive_negative_count']
+                                            logger.info(f"      前段連續負值: {count}/{config.MIN_CONSECUTIVE_BARS}根")
+                                    
+                                    # 分析做空信號失敗原因
+                                    if 'details' in short_analysis and 'stop_reason' in short_analysis['details']:
+                                        logger.info(f"   做空信號: {short_analysis['details']['stop_reason']}")
+                                        
+                                        # 詳細條件檢查記錄到log
+                                        if 'conditions' in short_analysis:
+                                            for condition, result in short_analysis['conditions'].items():
+                                                status = "✅" if result else "❌"
+                                                if condition == 'step1_first_negative':
+                                                    desc = "1H MACD剛轉負"
+                                                elif condition == 'step2_enough_positive':
+                                                    desc = "前段正值足夠"
+                                                elif condition == 'step3_4h_negative':
+                                                    desc = "4H MACD為負"
+                                                else:
+                                                    desc = condition
+                                                logger.info(f"      {status} {desc}: {result}")
+                                        
+                                        # 連續正值統計記錄到log
+                                        if 'consecutive_positive_count' in short_analysis['details']:
+                                            count = short_analysis['details']['consecutive_positive_count']
+                                            logger.info(f"      前段連續正值: {count}/{config.MIN_CONSECUTIVE_BARS}根")
+                                    
+                                    # 通用MACD狀態分析記錄到log
                                     prev_1h_macd = self.data_1h['macd_histogram'].iloc[-3] if len(self.data_1h) > 2 else 0
                                     logger.info(f"   1H MACD: 當前={latest_1h_macd:.6f}, 前一根={prev_1h_macd:.6f}")
                                     
-                                    if latest_1h_macd > 0 and prev_1h_macd <= 0:
-                                        logger.info("   1H MACD 剛轉正，檢查4H確認...")
-                                        if latest_4h_macd <= 0:
-                                            logger.info("   ❌ 4H MACD 非正值，做多信號未確認")
-                                    elif latest_1h_macd < 0 and prev_1h_macd >= 0:
-                                        logger.info("   1H MACD 剛轉負，檢查4H確認...")
-                                        if latest_4h_macd >= 0:
-                                            logger.info("   ❌ 4H MACD 非負值，做空信號未確認")
-                                    else:
-                                        logger.info("   1H MACD 未出現轉向信號")
-                                    
-                                    # 4小時趋势分析（只记录到日志，不显示到控制台）
+                                    # 4小時趨勢分析
                                     if latest_4h_macd > 0:
-                                        logger.info("   4H MACD > 0，整體偏多頭環境")
+                                        trend_desc = "多頭環境"
+                                        trend_emoji = "📈"
+                                        logger.info(f"   4H MACD > 0，整體偏多頭環境")
                                     elif latest_4h_macd < 0:
-                                        logger.info("   4H MACD < 0，整體偏空頭環境")
+                                        trend_desc = "空頭環境"
+                                        trend_emoji = "📉"
+                                        logger.info(f"   4H MACD < 0，整體偏空頭環境")
                                     else:
-                                        logger.info("   4H MACD 接近 0，趨勢不明確")
+                                        trend_desc = "趨勢不明"
+                                        trend_emoji = "➡️"
+                                        logger.info(f"   4H MACD 接近 0，趨勢不明確")
                                         
                                     if abs(latest_1h_macd) < 0.001:
                                         logger.info("   1H MACD 直方圖過小，信號強度不足")
+                                    
+                                    # 簡潔的控制台輸出
+                                    print(f"❌ 無信號 | {trend_emoji} {trend_desc} | 1H: {latest_1h_macd:.3f} | 4H: {latest_4h_macd:.1f}")
                             else:
                                 logger.warning(f"⚠️ 數據時間驗證失敗 (第{retry_count}次): {data_validation['reason']}")
                                 print(f"⚠️ 數據時間驗證失敗 (第{retry_count}次): {data_validation['reason']}")
