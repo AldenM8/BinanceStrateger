@@ -34,12 +34,16 @@ def run_backtest_mode(days: int = None, initial_capital: float = 10000.0):
     return results
 
 
-def run_monitor_mode(duration_hours: float = 24):
+def run_monitor_mode(duration_hours: float = None):
     """運行實時監控模式"""
     print("📡 啟動MACD策略實時監控模式")
     print("=" * 50)
     print("⚠️  注意：此模式僅監控信號，不會自動執行交易")
     print("💡 檢測到信號時請手動到交易所執行")
+    if duration_hours is None or duration_hours <= 0:
+        print("♾️ 無限監控模式：將持續運行直到手動停止 (Ctrl+C)")
+    else:
+        print(f"⏰ 限時監控模式：將運行 {duration_hours} 小時")
     print()
     
     strategy = MacdTradingStrategy()
@@ -57,8 +61,8 @@ def main():
                        help='回測天數 (僅適用於backtest模式)')
     parser.add_argument('--capital', type=float, default=10000.0,
                        help='初始資金 (僅適用於backtest模式)')
-    parser.add_argument('--hours', type=float, default=24,
-                       help='監控時長小時數 (僅適用於monitor模式)')
+    parser.add_argument('--hours', type=float, default=None,
+                       help='監控時長小時數 (僅適用於monitor模式)，不指定或<=0表示無限運行')
     
     args = parser.parse_args()
     

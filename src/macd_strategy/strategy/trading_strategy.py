@@ -408,7 +408,7 @@ class MacdTradingStrategy:
             logger.error(f"執行出場失敗: {e}")
             return False
     
-    def run_strategy(self, duration_hours: float = 24) -> dict:
+    def run_strategy(self, duration_hours: float = None) -> dict:
         """
         運行 MACD 交易策略（信號監測模式）
         - 每小時整點：開始檢查進場信號，持續重試直到獲得正確時間的數據
@@ -416,29 +416,47 @@ class MacdTradingStrategy:
         
         Args:
             duration_hours: 運行時長（小時）
+                         - None 或 負數：無限運行
+                         - 正數：運行指定小時數
             
         Returns:
             策略運行結果
         """
         
-        logger.info(f"開始運行 MACD 信號監測，預計運行 {duration_hours} 小時")
+        # 判斷是否無限運行
+        infinite_mode = duration_hours is None or duration_hours <= 0
+        
+        if infinite_mode:
+            logger.info("開始運行 MACD 信號監測 - 無限模式")
+            print(f"🚀 啟動 MACD 信號監測 - ♾️ 無限運行模式")
+            print(f"💡 提示：按 Ctrl+C 可以停止監測")
+        else:
+            logger.info(f"開始運行 MACD 信號監測，預計運行 {duration_hours} 小時")
+            print(f"🚀 啟動 MACD 信號監測，預計運行 {duration_hours} 小時")
+        
         logger.info(f"監測頻率：每小時整點檢查進場信號，持續重試直到獲得正確數據")
         logger.info(f"模式：純信號提醒，不執行實際交易")
-        print(f"🚀 啟動 MACD 信號監測，預計運行 {duration_hours} 小時")
         print(f"⚡ 監測模式：每小時整點檢查進場信號")
         print(f"📢 純提醒模式：檢測到信號時會提醒，手動下單後讓幣安自動執行")
         print(f"🎯 交易對：{self.symbol}")
         print("-" * 80)
         
         start_time = datetime.now()
-        end_time = start_time + timedelta(hours=duration_hours)
+        if not infinite_mode:
+            end_time = start_time + timedelta(hours=duration_hours)
         
         last_entry_check_hour = -1  # 記錄上次檢查進場信號的小時
         signal_count = 0  # 信號計數器
         
-        while datetime.now() < end_time:
+        # 主監測循環
+        while True:
             try:
                 current_time = datetime.now()
+                
+                # 檢查是否超過運行時間（僅在非無限模式）
+                if not infinite_mode and current_time >= end_time:
+                    break
+                
                 current_hour = current_time.hour
                 current_minute = current_time.minute
                 
@@ -605,16 +623,23 @@ class MacdTradingStrategy:
                     check_duration = (check_end_time - current_time).total_seconds()
                     
                     # 顯示統計信息
-                    remaining_time = end_time - datetime.now()
-                    remaining_hours = remaining_time.total_seconds() / 3600
                     next_check_time = current_time.replace(minute=0, second=1, microsecond=0) + timedelta(hours=1)
+                    total_runtime = (datetime.now() - start_time).total_seconds() / 3600
                     
                     logger.info(f"✅ 本次檢查完成，耗時 {check_duration:.1f} 秒")
                     logger.info(f"📈 信號統計: 已檢測到 {signal_count} 個信號")
-                    logger.info(f"⏳ 剩餘監測時間: {remaining_hours:.1f} 小時")
-                    logger.info(f"🕐 下次檢查時間: {next_check_time.strftime('%H:%M:%S')}")
                     
-                    print(f"🕐 下次檢查: {next_check_time.strftime('%H:%M:%S')} (信號數: {signal_count})")
+                    if infinite_mode:
+                        logger.info(f"⏰ 已運行時間: {total_runtime:.1f} 小時")
+                        logger.info(f"♾️ 無限監測模式 - 持續運行中")
+                        print(f"🕐 下次檢查: {next_check_time.strftime('%H:%M:%S')} (信號數: {signal_count}, 已運行: {total_runtime:.1f}h)")
+                    else:
+                        remaining_time = end_time - datetime.now()
+                        remaining_hours = remaining_time.total_seconds() / 3600
+                        logger.info(f"⏳ 剩餘監測時間: {remaining_hours:.1f} 小時")
+                        print(f"🕐 下次檢查: {next_check_time.strftime('%H:%M:%S')} (信號數: {signal_count}, 剩餘: {remaining_hours:.1f}h)")
+                    
+                    logger.info(f"🕐 下次檢查時間: {next_check_time.strftime('%H:%M:%S')}")
                     print("-" * 40)
                 
                 # 每1秒檢查一次時間，確保能準確捕捉到整點1秒
@@ -630,13 +655,24 @@ class MacdTradingStrategy:
                 time.sleep(60)  # 錯誤後等待1分鐘
         
         # 記錄監測結束
+        end_time = datetime.now()
+        total_runtime = (end_time - start_time).total_seconds() / 3600
+        
         logger.info("🏁 信號監測結束")
-        logger.info(f"📊 監測總結: 運行 {duration_hours} 小時，檢測到 {signal_count} 個信號")
+        if infinite_mode:
+            logger.info(f"📊 監測總結: 無限模式運行了 {total_runtime:.1f} 小時，檢測到 {signal_count} 個信號")
+            print(f"🏁 監測結束：運行了 {total_runtime:.1f} 小時，檢測到 {signal_count} 個信號")
+        else:
+            logger.info(f"📊 監測總結: 運行 {duration_hours} 小時，檢測到 {signal_count} 個信號")
+            print(f"🏁 監測結束：運行 {duration_hours} 小時，檢測到 {signal_count} 個信號")
         
         return {
             'total_signals': signal_count,
-            'monitoring_duration': duration_hours,
-            'end_time': datetime.now().isoformat()
+            'monitoring_duration': total_runtime,
+            'planned_duration': duration_hours,
+            'infinite_mode': infinite_mode,
+            'start_time': start_time.isoformat(),
+            'end_time': end_time.isoformat()
         }
     
     def _validate_data_timing(self, check_time: datetime) -> dict:
