@@ -21,6 +21,7 @@ try:
     from ..indicators.technical_indicators import TechnicalIndicators, SignalAnalyzer
     from ..strategy.trading_strategy import MacdTradingStrategy
     from ..core import config
+    from ..core.leverage_calculator import LeverageCalculator
 except ImportError:
     # 如果相對導入失敗，嘗試添加路徑並使用絕對導入
     current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -36,6 +37,7 @@ except ImportError:
         from src.macd_strategy.indicators.technical_indicators import TechnicalIndicators, SignalAnalyzer
         from src.macd_strategy.strategy.trading_strategy import MacdTradingStrategy
         from src.macd_strategy.core import config
+        from src.macd_strategy.core.leverage_calculator import LeverageCalculator
     except ImportError as e:
         print(f"❌ 無法導入必要模組: {e}")
         print("請確保從專案根目錄執行程式，或使用 main.py 作為入口點")
@@ -226,11 +228,20 @@ class BacktestEngine:
                 
                 if pending_signal['type'] == 'long':
                     position = 'long'
-                    # 複利模式：保證金基於當前總資金計算，實現複利效果
-                    margin_used = capital * config.POSITION_SIZE  # 實際占用的保證金
-                    # 槓桿合約：實際控制的名義價值
-                    notional_value = margin_used * config.LEVERAGE
-                    position_size = notional_value / entry_price
+                    
+                    # 使用動態槓桿計算持倉詳情
+                    position_details = LeverageCalculator.calculate_position_details(
+                        capital=capital,
+                        position_size_ratio=config.POSITION_SIZE,
+                        desired_leverage=config.LEVERAGE,
+                        entry_price=entry_price
+                    )
+                    
+                    # 提取計算結果
+                    margin_used = position_details["margin_used"]
+                    actual_leverage = position_details["actual_leverage"]
+                    notional_value = position_details["actual_notional"]
+                    position_size = position_details["position_quantity"]
                     
                     # 計算停損停利
                     atr = pending_signal['atr']
@@ -241,21 +252,37 @@ class BacktestEngine:
                     capital -= margin_used  # 扣除保證金
                     entry_time = current_time
                     
-                    print(f"📥 {self.format_taiwan_time(current_time)} 做多進場 - 價格: ${entry_price:.2f}, 停損: ${stop_loss:.2f}, 停利: ${take_profit:.2f}")
-                    print(f"💰 倉位大小: {position_size:.4f} {base_currency} (名義價值 ${notional_value:.2f}, {config.LEVERAGE}x 槓桿)")
+                    # 顯示槓桿限制信息
+                    leverage_warning = ""
+                    if position_details["leverage_limited"]:
+                        leverage_warning = f" ⚠️ 槓桿受限 ({config.LEVERAGE}x → {actual_leverage}x)"
+                    
+                    print(f"📥 {self.format_taiwan_time(current_time)} 做多進場 - 價格: ${entry_price:.2f}, 停損: ${stop_loss:.2f}, 停利: ${take_profit:.2f}{leverage_warning}")
+                    print(f"💰 倉位大小: {position_size:.4f} {base_currency} (名義價值 ${notional_value:.2f}, {actual_leverage}x 槓桿)")
                     print(f"💳 保證金占用: ${margin_used:.2f}")
+                    print(f"🔧 {LeverageCalculator.get_leverage_info_summary(notional_value)}")
                     
                     # 記錄進場日誌
-                    entry_msg = f"{self.format_taiwan_time(current_time)} 做多進場 - 價格: ${entry_price:.2f}, 停損: ${stop_loss:.2f}, 停利: ${take_profit:.2f}, 倉位: {position_size:.4f} {base_currency}, 槓桿: {config.LEVERAGE}x"
+                    entry_msg = f"{self.format_taiwan_time(current_time)} 做多進場 - 價格: ${entry_price:.2f}, 停損: ${stop_loss:.2f}, 停利: ${take_profit:.2f}, 倉位: {position_size:.4f} {base_currency}, 槓桿: {actual_leverage}x"
                     self.logger.info(entry_msg)
+                    self.logger.info(f"槓桿詳情: {LeverageCalculator.get_leverage_info_summary(notional_value)}")
                 
                 elif pending_signal['type'] == 'short':
                     position = 'short'
-                    # 複利模式：保證金基於當前總資金計算，實現複利效果
-                    margin_used = capital * config.POSITION_SIZE  # 實際占用的保證金
-                    # 槓桿合約：實際控制的名義價值
-                    notional_value = margin_used * config.LEVERAGE
-                    position_size = notional_value / entry_price
+                    
+                    # 使用動態槓桿計算持倉詳情
+                    position_details = LeverageCalculator.calculate_position_details(
+                        capital=capital,
+                        position_size_ratio=config.POSITION_SIZE,
+                        desired_leverage=config.LEVERAGE,
+                        entry_price=entry_price
+                    )
+                    
+                    # 提取計算結果
+                    margin_used = position_details["margin_used"]
+                    actual_leverage = position_details["actual_leverage"]
+                    notional_value = position_details["actual_notional"]
+                    position_size = position_details["position_quantity"]
                     
                     # 計算停損停利
                     atr = pending_signal['atr']
@@ -266,13 +293,20 @@ class BacktestEngine:
                     capital -= margin_used  # 扣除保證金（做空也需要保證金）
                     entry_time = current_time
                     
-                    print(f"📥 {self.format_taiwan_time(current_time)} 做空進場 - 價格: ${entry_price:.2f}, 停損: ${stop_loss:.2f}, 停利: ${take_profit:.2f}")
-                    print(f"💰 倉位大小: {position_size:.4f} {base_currency} (名義價值 ${notional_value:.2f}, {config.LEVERAGE}x 槓桿)")
+                    # 顯示槓桿限制信息
+                    leverage_warning = ""
+                    if position_details["leverage_limited"]:
+                        leverage_warning = f" ⚠️ 槓桿受限 ({config.LEVERAGE}x → {actual_leverage}x)"
+                    
+                    print(f"📥 {self.format_taiwan_time(current_time)} 做空進場 - 價格: ${entry_price:.2f}, 停損: ${stop_loss:.2f}, 停利: ${take_profit:.2f}{leverage_warning}")
+                    print(f"💰 倉位大小: {position_size:.4f} {base_currency} (名義價值 ${notional_value:.2f}, {actual_leverage}x 槓桿)")
                     print(f"💳 保證金占用: ${margin_used:.2f}")
+                    print(f"🔧 {LeverageCalculator.get_leverage_info_summary(notional_value)}")
                     
                     # 記錄進場日誌
-                    entry_msg = f"{self.format_taiwan_time(current_time)} 做空進場 - 價格: ${entry_price:.2f}, 停損: ${stop_loss:.2f}, 停利: ${take_profit:.2f}, 倉位: {position_size:.4f} {base_currency}, 槓桿: {config.LEVERAGE}x"
+                    entry_msg = f"{self.format_taiwan_time(current_time)} 做空進場 - 價格: ${entry_price:.2f}, 停損: ${stop_loss:.2f}, 停利: ${take_profit:.2f}, 倉位: {position_size:.4f} {base_currency}, 槓桿: {actual_leverage}x"
                     self.logger.info(entry_msg)
+                    self.logger.info(f"槓桿詳情: {LeverageCalculator.get_leverage_info_summary(notional_value)}")
                 
                 # 清除待進場信號
                 pending_signal = None
@@ -282,9 +316,13 @@ class BacktestEngine:
                 exit_price = None
                 exit_reason = None
                 
-                # 正確的爆倉價格計算
-                # 爆倉條件：當虧損達到保證金金額時（保留5%維持保證金）
-                maintenance_margin = margin_used * config.MAINTENANCE_MARGIN_RATIO
+                # 使用幣安動態維持保證金計算爆倉價格
+                # 根據當前持倉價值獲取對應的維持保證金比率
+                current_notional = notional_value  # 當前名義價值
+                maintenance_margin_rate = LeverageCalculator.calculate_maintenance_margin_rate(current_notional)
+                
+                # 使用動態維持保證金比率計算
+                maintenance_margin = margin_used * maintenance_margin_rate
                 max_loss_before_liquidation = margin_used - maintenance_margin
                 
                 if position == 'long':
@@ -352,8 +390,11 @@ class BacktestEngine:
                         'exit_price': exit_price,
                         'pnl': pnl,
                         'reason': exit_reason,
-                        'leverage': config.LEVERAGE,
-                        'margin_used': margin_used
+                        'leverage': actual_leverage,  # 使用實際槓桿
+                        'desired_leverage': config.LEVERAGE,  # 記錄期望槓桿
+                        'margin_used': margin_used,
+                        'notional_value': notional_value,
+                        'maintenance_margin_rate': maintenance_margin_rate
                     })
                     
                     # 計算ROI（相對於保證金）
@@ -422,8 +463,11 @@ class BacktestEngine:
                 'exit_price': final_price,
                 'pnl': pnl,
                 'reason': '強制平倉',
-                'leverage': config.LEVERAGE,
-                'margin_used': margin_used
+                'leverage': actual_leverage,  # 使用實際槓桿
+                'desired_leverage': config.LEVERAGE,  # 記錄期望槓桿
+                'margin_used': margin_used,
+                'notional_value': notional_value,
+                'maintenance_margin_rate': LeverageCalculator.calculate_maintenance_margin_rate(notional_value)
             })
             
             roi = (pnl / margin_used) * 100
