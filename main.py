@@ -17,10 +17,12 @@ from macd_strategy.strategy.trading_strategy import MacdTradingStrategy
 from macd_strategy.core import config
 
 
-def run_backtest_mode(days: int = None, initial_capital: float = 10000.0):
+def run_backtest_mode(days: int = None, initial_capital: float = None):
     """運行回測模式"""
     if days is None:
         days = config.BACKTEST_DAYS
+    if initial_capital is None:
+        initial_capital = config.INITIAL_CAPITAL
     
     print("🚀 啟動MACD策略回測模式")
     print("=" * 50)
@@ -59,8 +61,8 @@ def main():
                        default='backtest', help='運行模式')
     parser.add_argument('--days', type=int, default=None,
                        help='回測天數 (僅適用於backtest模式)')
-    parser.add_argument('--capital', type=float, default=10000.0,
-                       help='初始資金 (僅適用於backtest模式)')
+    parser.add_argument('--capital', type=float, default=None,
+                       help='初始資金 (僅適用於backtest模式，預設從config讀取)')
     parser.add_argument('--hours', type=float, default=None,
                        help='監控時長小時數 (僅適用於monitor模式)，不指定或<=0表示無限運行')
     

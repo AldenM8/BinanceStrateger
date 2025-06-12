@@ -215,7 +215,7 @@ class MacdTradingStrategy:
             
             # 獲取 4小時數據
             data_4h_raw = self.data_provider.get_ohlcv_data(
-                self.symbol, config.TIMEFRAME_4H, required_4h
+                self.symbol, "4h", required_4h
             )
             if data_4h_raw is None:
                 logger.error("無法獲取 4小時數據")
@@ -223,7 +223,7 @@ class MacdTradingStrategy:
             
             # 獲取 1小時數據
             data_1h_raw = self.data_provider.get_ohlcv_data(
-                self.symbol, config.TIMEFRAME_1H, required_1h
+                self.symbol, "1h", required_1h
             )
             if data_1h_raw is None:
                 logger.error("無法獲取 1小時數據")
@@ -465,9 +465,12 @@ class MacdTradingStrategy:
                 if (current_minute == 0 and current_second == 1 and current_hour != last_entry_check_hour):
                     # 記錄檢查開始
                     check_time_str = current_time.strftime('%Y-%m-%d %H:%M:%S')
+                    print(f"\n{'='*80}")
+                    print(f"🕐 時間: {check_time_str} | 小時信號檢查 #{current_hour}")
+                    print(f"{'='*80}")
+                    logger.info(f"\n{'='*80}")
                     logger.info(f"⏰ {check_time_str} - 開始執行每小時信號檢查")
-                    print(f"\n⏰ {check_time_str} - 檢查信號")
-                    
+                    logger.info(f"{'='*80}")
                     # 持續嘗試獲取正確的數據
                     data_acquired = False
                     retry_count = 0
@@ -714,7 +717,7 @@ class MacdTradingStrategy:
                         print(f"🕐 下次檢查: {next_check_time.strftime('%H:%M:%S')} (信號數: {signal_count}, 剩餘: {remaining_hours:.1f}h)")
                     
                     logger.info(f"🕐 下次檢查時間: {next_check_time.strftime('%H:%M:%S')}")
-                    print("-" * 40)
+                    print("✅ 本次檢查完成")
                 
                 # 每1秒檢查一次時間，確保能準確捕捉到整點1秒
                 time.sleep(1)
@@ -783,21 +786,14 @@ class MacdTradingStrategy:
             # 所以期望API返回的最新K線是當前小時（11:00）
             expected_1h_time_utc = utc_check_time.replace(minute=0, second=0, microsecond=0)
             
-            # ===== 4小時線邏輯 =====
-            # 在10:00:01檢查時，要看當前4小時週期（8-12點）的開盤時間
-            # 計算當前所在的4小時週期起始點
-            local_current_hour = check_time.hour
-            current_4h_start_local = (local_current_hour // 4) * 4
-            
-            # 轉換為UTC時間的4小時週期起始點
-            utc_4h_start_hour = (current_4h_start_local - 8) % 24
-            if current_4h_start_local < 8:
-                # 如果本地時間的4小時週期起始點在8點之前，需要看前一天
-                expected_4h_time_utc = (utc_check_time - timedelta(days=1)).replace(
-                    hour=utc_4h_start_hour, minute=0, second=0, microsecond=0)
-            else:
-                expected_4h_time_utc = utc_check_time.replace(
-                    hour=utc_4h_start_hour, minute=0, second=0, microsecond=0)
+            # ===== 4小時線邏輯修正 =====
+            # 4小時線開盤時間: 00:00, 04:00, 08:00, 12:00, 16:00, 20:00 (UTC)
+            # 對應台灣時間: 08:00, 12:00, 16:00, 20:00, 00:00, 04:00
+            utc_hour = utc_check_time.hour
+            current_4h_start_utc = (utc_hour // 4) * 4
+            expected_4h_time_utc = utc_check_time.replace(
+                hour=current_4h_start_utc, minute=0, second=0, microsecond=0
+            )
             
             # 計算時間差（小時為單位）
             time_diff_1h_hours = (latest_1h_timestamp - expected_1h_time_utc).total_seconds() / 3600
@@ -805,7 +801,7 @@ class MacdTradingStrategy:
             
             # 驗證邏輯：
             # 1小時線：容忍度2小時，如果差異超過2小時就需要重試
-            # 4小時線：檢查是否有當前週期的數據
+            # 4小時線：檢查是否有當前週期的數據（0-4小時內）
             is_1h_valid = abs(time_diff_1h_hours) < 2.0
             is_4h_valid = time_diff_4h_hours >= 0 and time_diff_4h_hours < 4.0  # 當前4小時週期內的數據
             
