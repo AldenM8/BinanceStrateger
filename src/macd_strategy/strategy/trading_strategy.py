@@ -303,12 +303,8 @@ class MacdTradingStrategy:
             atr = signal.get('atr', self.data_1h['atr'].iloc[-1])
             
             # 計算停損停利
-            if signal['side'] == 'long':
-                stop_loss = current_price - (atr * config.STOP_LOSS_MULTIPLIER)
-                take_profit = current_price + (atr * config.STOP_LOSS_MULTIPLIER * config.RISK_REWARD_RATIO)
-            else:  # short
-                stop_loss = current_price + (atr * config.STOP_LOSS_MULTIPLIER)
-                take_profit = current_price - (atr * config.STOP_LOSS_MULTIPLIER * config.RISK_REWARD_RATIO)
+            stop_loss = current_price - (atr * config.STOP_LOSS_MULTIPLIER) if signal['side'] == 'long' else current_price + (atr * config.STOP_LOSS_MULTIPLIER)
+            take_profit = current_price + (atr * config.STOP_LOSS_MULTIPLIER * config.RISK_REWARD_RATIO) if signal['side'] == 'long' else current_price - (atr * config.STOP_LOSS_MULTIPLIER * config.RISK_REWARD_RATIO)
             
             # 計算倉位大小
             position_size = config.POSITION_SIZE
@@ -615,8 +611,8 @@ class MacdTradingStrategy:
                                                 quantity = self.calculate_position_size(current_price)
                                                 
                                                 # 計算止盈止損價格
-                                                stop_loss = current_price * (1 - config.STOP_LOSS_PERCENTAGE)
-                                                take_profit = current_price * (1 + config.TAKE_PROFIT_PERCENTAGE)
+                                                stop_loss = current_price - (atr * config.STOP_LOSS_MULTIPLIER)
+                                                take_profit = current_price + (atr * config.STOP_LOSS_MULTIPLIER * config.RISK_REWARD_RATIO)
                                                 
                                                 # 執行 OTOCO 訂單
                                                 self.trade_executor.place_otoco_order(
@@ -645,8 +641,8 @@ class MacdTradingStrategy:
                                                 quantity = self.calculate_position_size(current_price)
                                                 
                                                 # 計算止盈止損價格
-                                                stop_loss = current_price * (1 + config.STOP_LOSS_PERCENTAGE)
-                                                take_profit = current_price * (1 - config.TAKE_PROFIT_PERCENTAGE)
+                                                stop_loss = current_price - (atr * config.STOP_LOSS_MULTIPLIER)
+                                                take_profit = current_price + (atr * config.STOP_LOSS_MULTIPLIER * config.RISK_REWARD_RATIO)
                                                 
                                                 # 執行 OTOCO 訂單
                                                 self.trade_executor.place_otoco_order(
