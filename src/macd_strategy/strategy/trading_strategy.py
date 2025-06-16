@@ -14,6 +14,7 @@ import os
 from ..core import config
 from ..data.data_provider import DataProvider
 from ..indicators.technical_indicators import TechnicalIndicators, SignalAnalyzer
+from ..trading.trade_executor import TradeExecutor
 
 # 設定日誌
 logging.basicConfig(
@@ -118,6 +119,7 @@ class MacdTradingStrategy:
         self.symbol = config.SYMBOL
         self.data_provider = DataProvider(config.EXCHANGE)
         self.signal_analyzer = SignalAnalyzer(config.MIN_CONSECUTIVE_BARS)
+        self.trade_executor = TradeExecutor()  # 添加交易執行器
         
         # 交易狀態
         self.positions: List[Position] = []
@@ -408,16 +410,19 @@ class MacdTradingStrategy:
             logger.error(f"執行出場失敗: {e}")
             return False
     
-    def run_strategy(self, duration_hours: float = None) -> dict:
+    def run_strategy(self, duration_hours: float = None, auto_trade: bool = True) -> dict:
         """
         運行 MACD 交易策略（信號監測模式）
         - 每小時整點：開始檢查進場信號，持續重試直到獲得正確時間的數據
-        - 純提醒模式：不執行實際交易，只提供信號提醒
+        - 支援自動交易模式：檢測到信號後自動執行交易
         
         Args:
             duration_hours: 運行時長（小時）
                          - None 或 負數：無限運行
                          - 正數：運行指定小時數
+            auto_trade: 是否啟用自動交易
+                      - True: 檢測到信號後自動執行交易
+                      - False: 純提醒模式，不執行交易
             
         Returns:
             策略運行結果
@@ -435,9 +440,14 @@ class MacdTradingStrategy:
             print(f"🚀 啟動 MACD 信號監測，預計運行 {duration_hours} 小時")
         
         logger.info(f"監測頻率：每小時整點檢查進場信號，持續重試直到獲得正確數據")
-        logger.info(f"模式：純信號提醒，不執行實際交易")
-        print(f"⚡ 監測模式：每小時整點檢查進場信號")
-        print(f"📢 純提醒模式：檢測到信號時會提醒，手動下單後讓幣安自動執行")
+        if auto_trade:
+            logger.info(f"模式：自動交易模式 - 檢測到信號後自動執行交易")
+            print(f"⚡ 監測模式：每小時整點檢查進場信號")
+            print(f"🤖 自動交易模式：檢測到信號後自動執行交易")
+        else:
+            logger.info(f"模式：純提醒模式 - 不執行實際交易")
+            print(f"⚡ 監測模式：每小時整點檢查進場信號")
+            print(f"📢 純提醒模式：檢測到信號時會提醒，手動下單後讓幣安自動執行")
         print(f"🎯 交易對：{self.symbol}")
         print("-" * 80)
         
@@ -591,6 +601,66 @@ class MacdTradingStrategy:
                                     print(f"🚨 【{signal_type} 信號】 ${current_price:.2f}")
                                     print(f"🛡️ 停損: ${suggested_stop_loss:.2f} | 🎯 停利: ${suggested_take_profit:.2f} | 📊 風報比: 1:{actual_risk_reward:.1f}")
                                     print("=" * 60)
+                                    
+                                    # 如果檢測到做多信號
+                                    if long_analysis['signal']:
+                                        logger.info("✅ 檢測到做多信號")
+                                        print("✅ 檢測到做多信號")
+                                        signal_count += 1
+                                        
+                                        if auto_trade:
+                                            try:
+                                                # 計算交易數量
+                                                current_price = self.trade_executor.get_current_price()
+                                                quantity = self.calculate_position_size(current_price)
+                                                
+                                                # 計算止盈止損價格
+                                                stop_loss = current_price * (1 - config.STOP_LOSS_PERCENTAGE)
+                                                take_profit = current_price * (1 + config.TAKE_PROFIT_PERCENTAGE)
+                                                
+                                                # 執行 OTOCO 訂單
+                                                self.trade_executor.place_otoco_order(
+                                                    side='BUY',
+                                                    quantity=quantity,
+                                                    entry_price=current_price,
+                                                    stop_loss=stop_loss,
+                                                    take_profit=take_profit
+                                                )
+                                                logger.info(f"已執行做多交易 - 數量: {quantity}, 價格: {current_price}")
+                                                print(f"🤖 已執行做多交易 - 數量: {quantity}, 價格: {current_price}")
+                                            except Exception as e:
+                                                logger.error(f"執行做多交易失敗: {e}")
+                                                print(f"❌ 執行做多交易失敗: {e}")
+                                    
+                                    # 如果檢測到做空信號
+                                    if short_analysis['signal']:
+                                        logger.info("✅ 檢測到做空信號")
+                                        print("✅ 檢測到做空信號")
+                                        signal_count += 1
+                                        
+                                        if auto_trade:
+                                            try:
+                                                # 計算交易數量
+                                                current_price = self.trade_executor.get_current_price()
+                                                quantity = self.calculate_position_size(current_price)
+                                                
+                                                # 計算止盈止損價格
+                                                stop_loss = current_price * (1 + config.STOP_LOSS_PERCENTAGE)
+                                                take_profit = current_price * (1 - config.TAKE_PROFIT_PERCENTAGE)
+                                                
+                                                # 執行 OTOCO 訂單
+                                                self.trade_executor.place_otoco_order(
+                                                    side='SELL',
+                                                    quantity=quantity,
+                                                    entry_price=current_price,
+                                                    stop_loss=stop_loss,
+                                                    take_profit=take_profit
+                                                )
+                                                logger.info(f"已執行做空交易 - 數量: {quantity}, 價格: {current_price}")
+                                                print(f"🤖 已執行做空交易 - 數量: {quantity}, 價格: {current_price}")
+                                            except Exception as e:
+                                                logger.error(f"執行做空交易失敗: {e}")
+                                                print(f"❌ 執行做空交易失敗: {e}")
                                     
                                 else:
                                     logger.info("📊 本次檢查無進場信號")
@@ -919,15 +989,27 @@ def main():
         # 建立策略實例（使用真實 Binance 數據）
         strategy = MacdTradingStrategy()
         
-        # 設定運行時間
+        # 設定運行時間和交易模式
         print("🚀 MACD 信號監測系統啟動")
-        print("📢 純提醒模式：只監測信號，不執行交易")
+        print("請選擇運行模式：")
+        print("1. 自動交易模式 - 檢測到信號後自動執行交易")
+        print("2. 純提醒模式 - 只監測信號，不執行交易")
+        mode = input("請輸入選項 (1-2): ").strip()
+        
+        auto_trade = mode == '1'
+        
+        if auto_trade:
+            print("🤖 已選擇自動交易模式")
+        else:
+            print("📢 已選擇純提醒模式")
+        
         print("⚡ 監測頻率：每小時整點檢查進場信號")
-        print("🎲 檢測到信號時會提醒，手動下單後讓幣安自動執行")
+        print("🎲 交易對：", strategy.symbol)
+        print("♾️ 持續運行模式 - 按 Ctrl+C 停止")
         print("-" * 80)
         
-        # 執行信號監測（預設 24 小時）
-        results = strategy.run_strategy(duration_hours=24)
+        # 執行信號監測（無限運行模式）
+        results = strategy.run_strategy(duration_hours=None, auto_trade=auto_trade)
         
         print("\n=== 信號監測結束 ===")
         print(f"📊 總檢測信號數: {results['total_signals']}")
